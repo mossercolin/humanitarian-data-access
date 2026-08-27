@@ -1,0 +1,348 @@
+{
+  "schema_version": "hda-source-registry/v2",
+  "sources": {
+    "hdx_ckan": {
+      "authority": {"id": "ocha_chd", "name": "OCHA Centre for Humanitarian Data"},
+      "product_name": "Humanitarian Data Exchange (HDX) Catalog",
+      "relevance_class": "humanitarian_operational",
+      "official_home": "https://data.humdata.org/",
+      "source_notes": ["Previously identified as Humanitarian Data Exchange (HDX)."],
+      "interfaces": [{
+        "interface_id": "hdx_ckan_api", "interface_name": "CKAN API", "interface_version": "current", "lifecycle": "current", "preferred": true,
+        "l1_status": "validated", "l2_status": "access_ready",
+        "official_docs": ["https://data.humdata.org/api/3"], "base_urls": ["https://data.humdata.org/api/3", "https://data.humdata.org/api/3/action"], "validated_at": "2026-08-26", "last_verified_at": "2026-08-26", "validation_basis": ["generic discovery proof"],
+        "protocol_class": "ckan", "discovery_method": "CKAN package_search", "data_access_method": "CKAN actions and resource URLs", "schema_discovery_method": "ckan_action_metadata", "formats": ["json"],
+        "auth_class": "anonymous", "credential_nature": "none", "credential_acquisition": "none", "credential_ref": null, "access_scope_notes": [],
+        "server_side_filtering": "yes", "pagination_method": "offset_limit", "documented_page_limit": null, "documented_response_limit": null, "full_response_required_observed": false, "rate_limit_documented": null, "network_notes": [],
+        "document_access": "resource_urls", "document_formats": [], "document_notes": [],
+        "known_constraints": ["Generic discovery is operationally proven; search negatives are scoped, not global."], "unresolved": []
+      }]
+    },
+    "ocha_cod_ab": {
+      "authority": {"id": "ocha", "name": "United Nations OCHA"},
+      "product_name": "Common Operational Datasets — Administrative Boundaries (COD-AB)",
+      "relevance_class": "humanitarian_operational",
+      "official_home": "https://data.humdata.org/dashboards/cod",
+      "source_notes": ["Country datasets may identify additional national or contributing source authorities; preserve each dataset's literal organization and lineage."],
+      "interfaces": [{
+        "interface_id": "ocha_cod_ab_hdx_geojson", "interface_name": "COD-AB GeoJSON via HDX", "interface_version": "country-dataset current", "lifecycle": "current", "preferred": true,
+        "l1_status": "validated", "l2_status": "access_ready",
+        "official_docs": ["https://data.humdata.org/dashboards/cod", "https://data.humdata.org/dataset/cod-ab-global", "https://data.humdata.org/api/3"], "base_urls": ["https://data.humdata.org/api/3/action", "https://data.humdata.org/dataset/"], "validated_at": "2026-08-27", "last_verified_at": "2026-08-27", "validation_basis": ["live Lebanon COD-AB admin-0 identity and boundary proof", "anonymous HDX CKAN metadata discovery", "anonymous GeoJSON archive acquisition", "source-declared CRS and native identity preservation"],
+        "protocol_class": "ckan_resource_geojson", "discovery_method": "exact country identity within HDX CKAN COD-AB datasets", "data_access_method": "country COD-AB GeoJSON archive resource", "schema_discovery_method": "GeoJSON properties", "formats": ["geojson", "zip"],
+        "auth_class": "anonymous", "credential_nature": "none", "credential_acquisition": "none", "credential_ref": null, "access_scope_notes": [],
+        "server_side_filtering": "catalog_only", "pagination_method": "not_applicable_to_resource", "documented_page_limit": null, "documented_response_limit": null, "full_response_required_observed": true, "rate_limit_documented": null, "network_notes": ["The Lebanon proof downloaded the full approximately 21.5 MB GeoJSON archive to extract one administrative level; bounded output does not imply bounded network transfer."],
+        "document_access": "resource_urls", "document_formats": ["geojson"], "document_notes": ["The Lebanon proof observed a ZIP containing separate non-edge-matched and edge-matched GeoJSON members by administrative level."],
+        "known_constraints": ["Country coverage, available administrative levels, native schemas, validity dates, and caveats vary by COD dataset.", "The Lebanon proof observed source-declared OGC:CRS84 and performed no CRS transformation or EPSG equivalence assertion.", "Dataset selection requires one exact COD-AB country identity; fuzzy place matching is intentionally rejected."], "unresolved": []
+      }]
+    },
+    "hdx_hapi": {
+      "authority": {"id": "ocha_chd", "name": "OCHA Centre for Humanitarian Data"},
+      "product_name": "HDX Humanitarian API (HAPI)", "relevance_class": "humanitarian_operational", "official_home": "https://hapi.humdata.org/", "source_notes": [],
+      "interfaces": [{
+        "interface_id": "hdx_hapi_v2", "interface_name": "HDX HAPI", "interface_version": "v2", "lifecycle": "current", "preferred": true,
+        "l1_status": "validated", "l2_status": "access_ready",
+        "official_docs": ["https://hdx-hapi.readthedocs.io/", "https://hapi.humdata.org/", "https://hapi.humdata.org/openapi.json"], "base_urls": ["https://hapi.humdata.org/api/v2"], "validated_at": "2026-08-26", "last_verified_at": "2026-08-26", "validation_basis": ["live queries and OpenAPI proof"],
+        "protocol_class": "rest_openapi", "discovery_method": "OpenAPI/live endpoint list", "data_access_method": "REST data endpoints", "schema_discovery_method": "openapi", "formats": ["json"],
+        "auth_class": "app_identifier", "credential_nature": "non_secret_identifier", "credential_acquisition": "self_service_immediate", "credential_ref": null, "access_scope_notes": [],
+        "server_side_filtering": "yes", "pagination_method": "offset_limit", "documented_page_limit": null, "documented_response_limit": 10000, "full_response_required_observed": false, "rate_limit_documented": null, "network_notes": [],
+        "document_access": "not_applicable", "document_formats": [], "document_notes": [],
+        "known_constraints": ["The validation snapshot observed OpenAPI version 0.9.14.", "The validation snapshot observed 26 GET routes and 13 humanitarian-data routes; this is dated evidence, not timeless truth.", "Official documentation describes a maximum of 10,000 rows per response."], "unresolved": []
+      }]
+    },
+    "ocha_hpc": {
+      "authority": {"id": "ocha", "name": "United Nations OCHA"},
+      "product_name": "Humanitarian Programme Cycle API", "relevance_class": "humanitarian_operational", "official_home": "https://api.hpc.tools/", "source_notes": ["Previously recorded organization name: United Nations Office for the Coordination of Humanitarian Affairs (OCHA)."],
+      "interfaces": [
+        {
+          "interface_id": "ocha_hpc_v2_public", "interface_name": "HPC public API", "interface_version": "v2", "lifecycle": "current", "preferred": true,
+          "l1_status": "validated", "l2_status": "access_ready",
+          "official_docs": ["https://api.hpc.tools/docs/v2/", "https://api.hpc.tools/api-docs"], "base_urls": ["https://api.hpc.tools/v2/public"], "validated_at": "2026-08-26", "last_verified_at": "2026-08-26", "validation_basis": ["public API proof", "live public endpoint discovery", "bounded generic GET queries", "client-side pagination over unpaginated responses", "native ID and explicit relationship lineage"],
+          "protocol_class": "rest", "discovery_method": "Swagger/live public endpoint discovery", "data_access_method": "public REST resources", "schema_discovery_method": "swagger", "formats": ["json"],
+          "auth_class": "anonymous", "credential_nature": "none", "credential_acquisition": "none", "credential_ref": null, "access_scope_notes": [],
+          "server_side_filtering": "partial", "pagination_method": "none_observed", "documented_page_limit": null, "documented_response_limit": null, "full_response_required_observed": true, "rate_limit_documented": null, "network_notes": ["The tested plan operation returned approximately 916 records and approximately 6 MB before client-side windowing.", "Bounded model output did not imply bounded network transfer."],
+          "document_access": "not_applicable", "document_formats": [], "document_notes": [],
+          "known_constraints": ["The validation snapshot observed 17 GET resources."], "unresolved": []
+        },
+        {
+          "interface_id": "ocha_hpc_v4_graphql", "interface_name": "HPC GraphQL API", "interface_version": "v4", "lifecycle": "planned", "preferred": false,
+          "l1_status": "validated", "l2_status": "not_applicable",
+          "official_docs": ["https://github.com/UN-OCHA/hpc-api"], "base_urls": [], "validated_at": "2026-08-26", "last_verified_at": "2026-08-26", "validation_basis": ["official_repository_reviewed"],
+          "protocol_class": "graphql_planned", "discovery_method": "unknown", "data_access_method": "unknown", "schema_discovery_method": "unknown", "formats": [],
+          "auth_class": "unknown", "credential_nature": "unknown", "credential_acquisition": "unknown", "credential_ref": null, "access_scope_notes": [],
+          "server_side_filtering": "unknown", "pagination_method": "unknown", "documented_page_limit": null, "documented_response_limit": null, "full_response_required_observed": null, "rate_limit_documented": null, "network_notes": [],
+          "document_access": "unknown", "document_formats": [], "document_notes": [],
+          "known_constraints": ["The official OCHA repository described v4 as early planning/development and directed users to continue using v2."], "unresolved": []
+        }
+      ]
+    },
+    "ocha_fts": {
+      "authority": {"id": "ocha", "name": "United Nations OCHA"}, "product_name": "Financial Tracking Service (FTS)", "relevance_class": "humanitarian_operational", "official_home": "https://fts.unocha.org/", "source_notes": [],
+      "interfaces": [{
+        "interface_id": "ocha_fts_flow", "interface_name": "FTS flow API", "interface_version": "current", "lifecycle": "current", "preferred": true, "l1_status": "partial", "l2_status": "not_attempted",
+        "official_docs": ["https://api.hpc.tools/docs/v2/"], "base_urls": ["https://api.hpc.tools/"], "validated_at": null, "last_verified_at": "2026-08-26", "validation_basis": ["publisher_documentation_reviewed"],
+        "protocol_class": "rest", "discovery_method": "unknown", "data_access_method": "REST", "schema_discovery_method": "swagger", "formats": ["json"],
+        "auth_class": "anonymous", "credential_nature": "none", "credential_acquisition": "none", "credential_ref": null, "access_scope_notes": [],
+        "server_side_filtering": "unknown", "pagination_method": "unknown", "documented_page_limit": null, "documented_response_limit": null, "full_response_required_observed": null, "rate_limit_documented": null, "network_notes": [],
+        "document_access": "unknown", "document_formats": [], "document_notes": [], "known_constraints": ["FTS remains explicit; public-plan validation did not establish full FTS coverage."], "unresolved": ["Pin the preferred current native FTS flow endpoint and version."]
+      }]
+    },
+    "reliefweb": {
+      "authority": {"id": "ocha_reliefweb", "name": "OCHA ReliefWeb"}, "product_name": "ReliefWeb", "relevance_class": "humanitarian_operational", "official_home": "https://reliefweb.int/", "source_notes": [],
+      "interfaces": [{
+        "interface_id": "reliefweb_v2", "interface_name": "ReliefWeb API", "interface_version": "v2", "lifecycle": "current", "preferred": true, "l1_status": "validated", "l2_status": "credential_pending",
+        "official_docs": ["https://apidoc.reliefweb.int/"], "base_urls": ["https://api.reliefweb.int/v2"], "validated_at": "2026-08-26", "last_verified_at": "2026-08-26", "validation_basis": ["official_documentation_reviewed"],
+        "protocol_class": "rest_openapi", "discovery_method": "report/search API", "data_access_method": "read-only search/metadata API", "schema_discovery_method": "openapi", "formats": ["json"],
+        "auth_class": "appname_identifier", "credential_nature": "non_secret_identifier", "credential_acquisition": "publisher_reviewed", "credential_ref": null, "access_scope_notes": ["Since 1 November 2025, appname must be pre-approved."],
+        "server_side_filtering": "yes", "pagination_method": "offset_limit", "documented_page_limit": null, "documented_response_limit": null, "full_response_required_observed": false, "rate_limit_documented": null, "network_notes": [],
+        "document_access": "attachments", "document_formats": ["pdf", "html", "xlsx", "csv", "image", "other"], "document_notes": ["Attachment URLs may be exposed in report metadata and fetched separately."],
+        "known_constraints": ["V1 is decommissioned.", "ReliefWeb absence is not global document absence."], "unresolved": []
+      }]
+    },
+    "ocha_cerf": {
+      "authority": {"id": "ocha", "name": "United Nations OCHA"}, "product_name": "Central Emergency Response Fund (CERF) Data", "relevance_class": "humanitarian_operational", "official_home": "https://cerf.un.org/", "source_notes": [],
+      "interfaces": [{
+        "interface_id": "cerf_data_api", "interface_name": "CERF Data API", "interface_version": "current", "lifecycle": "current", "preferred": true, "l1_status": "validated", "l2_status": "not_attempted",
+        "official_docs": ["https://cerfgms-webapi.unocha.org/"], "base_urls": ["https://cerfgms-webapi.unocha.org/"], "validated_at": "2026-08-26", "last_verified_at": "2026-08-26", "validation_basis": ["official_api_reviewed"],
+        "protocol_class": "rest", "discovery_method": "unknown", "data_access_method": "REST", "schema_discovery_method": "unknown", "formats": ["json"],
+        "auth_class": "anonymous", "credential_nature": "none", "credential_acquisition": "none", "credential_ref": null, "access_scope_notes": [],
+        "server_side_filtering": "unknown", "pagination_method": "unknown", "documented_page_limit": null, "documented_response_limit": null, "full_response_required_observed": null, "rate_limit_documented": null, "network_notes": [], "document_access": "unknown", "document_formats": [], "document_notes": [],
+        "known_constraints": ["The public API exposes applications, projects, donor contributions, and related filters."], "unresolved": []
+      }]
+    },
+    "ocha_cbpf": {
+      "authority": {"id": "ocha", "name": "United Nations OCHA"}, "product_name": "Country-Based Pooled Funds / Pooled Funds Data Hub", "relevance_class": "humanitarian_operational", "official_home": "https://pfdata.unocha.org/", "source_notes": [],
+      "interfaces": [
+        {
+          "interface_id": "cbpf_api_public", "interface_name": "CBPF public API", "interface_version": "current", "lifecycle": "current", "preferred": true, "l1_status": "validated", "l2_status": "not_attempted",
+          "official_docs": ["https://cbpfapi.unocha.org/"], "base_urls": ["https://cbpfapi.unocha.org/"], "validated_at": "2026-08-26", "last_verified_at": "2026-08-26", "validation_basis": ["official_api_reviewed"],
+          "protocol_class": "rest", "discovery_method": "unknown", "data_access_method": "public REST routes", "schema_discovery_method": "unknown", "formats": ["json", "csv"], "auth_class": "anonymous", "credential_nature": "none", "credential_acquisition": "none", "credential_ref": null, "access_scope_notes": [],
+          "server_side_filtering": "unknown", "pagination_method": "unknown", "documented_page_limit": null, "documented_response_limit": null, "full_response_required_observed": null, "rate_limit_documented": null, "network_notes": [], "document_access": "unknown", "document_formats": [], "document_notes": [], "known_constraints": ["Public and secured route classes coexist."], "unresolved": []
+        },
+        {
+          "interface_id": "cbpf_api_secured", "interface_name": "CBPF secured API", "interface_version": "current", "lifecycle": "current", "preferred": true, "l1_status": "validated", "l2_status": "credential_pending",
+          "official_docs": ["https://cbpfapi.unocha.org/"], "base_urls": ["https://cbpfapi.unocha.org/"], "validated_at": "2026-08-26", "last_verified_at": "2026-08-26", "validation_basis": ["official_api_reviewed"],
+          "protocol_class": "rest", "discovery_method": "unknown", "data_access_method": "secured REST routes", "schema_discovery_method": "unknown", "formats": ["json", "csv"], "auth_class": "account_session", "credential_nature": "account", "credential_acquisition": "self_service_account", "credential_ref": null, "access_scope_notes": [],
+          "server_side_filtering": "unknown", "pagination_method": "unknown", "documented_page_limit": null, "documented_response_limit": null, "full_response_required_observed": null, "rate_limit_documented": null, "network_notes": [], "document_access": "unknown", "document_formats": [], "document_notes": [], "known_constraints": ["Registration and authentication are required for secured routes."], "unresolved": []
+        }
+      ]
+    },
+    "ipc_ch": {
+      "authority": {"id": "ipc", "name": "IPC Global Initiative"}, "product_name": "IPC / Cadre Harmonisé API", "relevance_class": "humanitarian_operational", "official_home": "https://www.ipcinfo.org/", "source_notes": [],
+      "interfaces": [{
+        "interface_id": "ipc_public_api", "interface_name": "IPC API", "interface_version": "1.0.0", "lifecycle": "current", "preferred": true, "l1_status": "validated", "l2_status": "credential_pending",
+        "official_docs": ["https://docs.api.ipcinfo.org/"], "base_urls": ["https://api.ipcinfo.org/"], "validated_at": "2026-08-26", "last_verified_at": "2026-08-26", "validation_basis": ["official_documentation_reviewed"],
+        "protocol_class": "rest_openapi", "discovery_method": "OpenAPI", "data_access_method": "analyses/country/areas/points/developer endpoints", "schema_discovery_method": "openapi", "formats": ["json", "geojson"],
+        "auth_class": "api_key", "credential_nature": "secret", "credential_acquisition": "publisher_reviewed", "credential_ref": null, "access_scope_notes": ["Official seed access terms require an API-key request and allow publisher refusal or disablement."],
+        "server_side_filtering": "yes", "pagination_method": "unknown", "documented_page_limit": null, "documented_response_limit": null, "full_response_required_observed": null, "rate_limit_documented": null, "network_notes": [], "document_access": "unknown", "document_formats": [], "document_notes": [],
+        "known_constraints": [], "unresolved": ["Verify the scope meant by public versus key-gated access during L2."]
+      }]
+    },
+    "iom_dtm": {
+      "authority": {"id": "iom", "name": "International Organization for Migration"}, "product_name": "Displacement Tracking Matrix", "relevance_class": "humanitarian_operational", "official_home": "https://dtm.iom.int/", "source_notes": [],
+      "interfaces": [{
+        "interface_id": "iom_dtm_v3", "interface_name": "IOM DTM API", "interface_version": "v3", "lifecycle": "current", "preferred": true, "l1_status": "validated", "l2_status": "credential_pending",
+        "official_docs": ["https://dtm.iom.int/data-and-analysis/dtm-api"], "base_urls": [], "validated_at": "2026-08-26", "last_verified_at": "2026-08-26", "validation_basis": ["official_documentation_reviewed"],
+        "protocol_class": "rest", "discovery_method": "unknown", "data_access_method": "REST", "schema_discovery_method": "unknown", "formats": ["json"], "auth_class": "subscription_key", "credential_nature": "secret", "credential_acquisition": "self_service_account", "credential_ref": null, "access_scope_notes": ["Non-sensitive data includes country, Admin1, and Admin2 aggregates."],
+        "server_side_filtering": "unknown", "pagination_method": "unknown", "documented_page_limit": null, "documented_response_limit": null, "full_response_required_observed": null, "rate_limit_documented": null, "network_notes": [], "document_access": "unknown", "document_formats": [], "document_notes": [],
+        "known_constraints": ["V3 was released on 22 August 2025.", "V1 and V2 remain but are not maintained.", "V3 adds drivers, origins, and sex."], "unresolved": ["Pin the current v3 base URL."]
+      }]
+    },
+    "unhcr_refugee_statistics": {
+      "authority": {"id": "unhcr", "name": "UNHCR"}, "product_name": "Refugee Statistics / Refugee Data Finder", "relevance_class": "humanitarian_operational", "official_home": "https://www.unhcr.org/refugee-statistics/", "source_notes": [],
+      "interfaces": [{
+        "interface_id": "unhcr_refugee_stats_v1", "interface_name": "UNHCR Refugee Statistics API", "interface_version": "v1", "lifecycle": "current", "preferred": true, "l1_status": "validated", "l2_status": "access_ready",
+        "official_docs": ["https://api.unhcr.org/docs/refugee-statistics.html"], "base_urls": ["https://api.unhcr.org/population/v1/"], "validated_at": "2026-08-26", "last_verified_at": "2026-08-27", "validation_basis": ["official_documentation_reviewed", "HDA first L2-A anonymous population data proof"],
+        "protocol_class": "rest", "discovery_method": "reference endpoints", "data_access_method": "population/demographics/asylum/nowcasting/reference endpoints", "schema_discovery_method": "documentation", "formats": ["json", "csv"], "auth_class": "anonymous", "credential_nature": "none", "credential_acquisition": "none", "credential_ref": null, "access_scope_notes": ["Anonymous HTTP 200 JSON access observed for the population data operation."],
+        "server_side_filtering": "yes", "pagination_method": "page_limit", "documented_page_limit": null, "documented_response_limit": null, "full_response_required_observed": false, "rate_limit_documented": null, "network_notes": ["A bounded population request with limit=2 and page=1 returned one matching record and reported maxPages=1."], "document_access": "not_applicable", "document_formats": [], "document_notes": [],
+        "known_constraints": [], "unresolved": []
+      }]
+    },
+    "unhcr_odp": {
+      "authority": {"id": "unhcr", "name": "UNHCR"}, "product_name": "Operational Data Portal", "relevance_class": "humanitarian_operational", "official_home": "https://data.unhcr.org/", "source_notes": [],
+      "interfaces": [{
+        "interface_id": "unhcr_odp_api", "interface_name": "UNHCR ODP API", "interface_version": "current", "lifecycle": "current", "preferred": true, "l1_status": "partial", "l2_status": "credential_pending",
+        "official_docs": ["https://data.unhcr.org/en/api/api-registration", "https://data.unhcr.org/api/doc"], "base_urls": ["https://data.unhcr.org/"], "validated_at": null, "last_verified_at": "2026-08-26", "validation_basis": ["publisher_documentation_reviewed"],
+        "protocol_class": "rest", "discovery_method": "unknown", "data_access_method": "REST", "schema_discovery_method": "unknown", "formats": ["json", "geojson", "documents"], "auth_class": "account_session", "credential_nature": "account", "credential_acquisition": "publisher_reviewed", "credential_ref": null, "access_scope_notes": [],
+        "server_side_filtering": "unknown", "pagination_method": "unknown", "documented_page_limit": null, "documented_response_limit": null, "full_response_required_observed": null, "rate_limit_documented": null, "network_notes": [], "document_access": "mixed", "document_formats": [], "document_notes": [],
+        "known_constraints": ["This is distinct from Refugee Statistics; API registration exists."], "unresolved": ["Establish exact current endpoint families and public-versus-registered scope."]
+      }]
+    },
+    "who_whdh_xmart": {
+      "authority": {"id": "who", "name": "World Health Organization"}, "product_name": "World Health Data Hub / xMart", "relevance_class": "humanitarian_context", "official_home": "https://data.who.int/", "source_notes": [],
+      "interfaces": [
+        {
+          "interface_id": "who_whdh_xmart_public", "interface_name": "WHDH xMart public OData", "interface_version": "current", "lifecycle": "current", "preferred": true, "l1_status": "validated", "l2_status": "not_attempted",
+          "official_docs": ["https://extranet.who.int/xmart4/docs/xmart_api/use_API.html"], "base_urls": [], "validated_at": "2026-08-26", "last_verified_at": "2026-08-26", "validation_basis": ["official_documentation_reviewed"],
+          "protocol_class": "odata", "discovery_method": "$metadata", "data_access_method": "OData", "schema_discovery_method": "odata_metadata", "formats": ["json", "csv"], "auth_class": "anonymous", "credential_nature": "none", "credential_acquisition": "none", "credential_ref": null, "access_scope_notes": ["Public marts can be anonymous."],
+          "server_side_filtering": "yes", "pagination_method": "offset_limit", "documented_page_limit": null, "documented_response_limit": null, "full_response_required_observed": false, "rate_limit_documented": null, "network_notes": [], "document_access": "not_applicable", "document_formats": [], "document_notes": [], "known_constraints": ["Private marts use registered-client authentication."], "unresolved": ["Pin the public base URL."]
+        },
+        {
+          "interface_id": "who_xmart_private", "interface_name": "xMart private OData", "interface_version": "current", "lifecycle": "current", "preferred": true, "l1_status": "validated", "l2_status": "credential_pending",
+          "official_docs": ["https://extranet.who.int/xmart4/docs/xmart_api/use_API.html"], "base_urls": [], "validated_at": "2026-08-26", "last_verified_at": "2026-08-26", "validation_basis": ["official_documentation_reviewed"],
+          "protocol_class": "odata", "discovery_method": "$metadata", "data_access_method": "OData", "schema_discovery_method": "odata_metadata", "formats": ["json", "csv"], "auth_class": "oauth2", "credential_nature": "secret", "credential_acquisition": "self_service_account", "credential_ref": null, "access_scope_notes": ["Private access depends on registered client permissions."],
+          "server_side_filtering": "yes", "pagination_method": "next_link", "documented_page_limit": null, "documented_response_limit": null, "full_response_required_observed": false, "rate_limit_documented": null, "network_notes": [], "document_access": "not_applicable", "document_formats": [], "document_notes": [], "known_constraints": [], "unresolved": ["Pin the private base URL."]
+        }
+      ]
+    },
+    "who_gho_legacy": {
+      "authority": {"id": "who", "name": "World Health Organization"}, "product_name": "Global Health Observatory legacy/transitional interfaces", "relevance_class": "humanitarian_context", "official_home": "https://www.who.int/data/gho", "source_notes": [],
+      "interfaces": [{
+        "interface_id": "who_gho_odata_legacy", "interface_name": "GHO legacy OData", "interface_version": "legacy", "lifecycle": "deprecated", "preferred": false, "l1_status": "validated", "l2_status": "not_attempted",
+        "official_docs": ["https://www.who.int/data/gho/legacy"], "base_urls": [], "validated_at": "2026-08-26", "last_verified_at": "2026-08-26", "validation_basis": ["official_documentation_reviewed"],
+        "protocol_class": "odata", "discovery_method": "unknown", "data_access_method": "OData", "schema_discovery_method": "odata_metadata", "formats": ["json"], "auth_class": "anonymous", "credential_nature": "none", "credential_acquisition": "none", "credential_ref": null, "access_scope_notes": [],
+        "server_side_filtering": "unknown", "pagination_method": "unknown", "documented_page_limit": null, "documented_response_limit": null, "full_response_required_observed": null, "rate_limit_documented": null, "network_notes": [], "document_access": "not_applicable", "document_formats": [], "document_notes": [],
+        "known_constraints": ["WHO states Athena and Minerva are retired, while the older GHO OData direction was being deprecated in favor of WHDH OData."], "unresolved": ["Pin the legacy base URL only if future work requires it."]
+      }]
+    },
+    "who_hidr": {
+      "authority": {"id": "who", "name": "World Health Organization"}, "product_name": "Health Inequality Data Repository", "relevance_class": "socioeconomic_context", "official_home": "https://www.who.int/data/inequality-monitor/data/hidr-api", "source_notes": [],
+      "interfaces": [
+        {
+          "interface_id": "who_hidr_odata", "interface_name": "HIDR OData", "interface_version": "current", "lifecycle": "current", "preferred": true, "l1_status": "validated", "l2_status": "not_attempted",
+          "official_docs": ["https://www.who.int/data/inequality-monitor/data/hidr-api"], "base_urls": [], "validated_at": "2026-08-26", "last_verified_at": "2026-08-26", "validation_basis": ["official_documentation_reviewed"],
+          "protocol_class": "odata", "discovery_method": "$metadata", "data_access_method": "OData", "schema_discovery_method": "odata_metadata", "formats": ["json", "csv"], "auth_class": "anonymous", "credential_nature": "none", "credential_acquisition": "none", "credential_ref": null, "access_scope_notes": [],
+          "server_side_filtering": "unknown", "pagination_method": "unknown", "documented_page_limit": null, "documented_response_limit": null, "full_response_required_observed": null, "rate_limit_documented": null, "network_notes": [], "document_access": "not_applicable", "document_formats": [], "document_notes": [], "known_constraints": ["This is a health-equity/context source; some content originates from external sources and is not automatically a WHO estimate."], "unresolved": ["Pin the OData base URL."]
+        },
+        {
+          "interface_id": "who_hidr_download_api", "interface_name": "HIDR download API", "interface_version": "current", "lifecycle": "current", "preferred": true, "l1_status": "validated", "l2_status": "not_attempted",
+          "official_docs": ["https://www.who.int/data/inequality-monitor/data/hidr-api"], "base_urls": [], "validated_at": "2026-08-26", "last_verified_at": "2026-08-26", "validation_basis": ["official_documentation_reviewed"],
+          "protocol_class": "rest_openapi", "discovery_method": "OpenAPI", "data_access_method": "download API", "schema_discovery_method": "openapi", "formats": ["json", "csv"], "auth_class": "anonymous", "credential_nature": "none", "credential_acquisition": "none", "credential_ref": null, "access_scope_notes": [],
+          "server_side_filtering": "unknown", "pagination_method": "unknown", "documented_page_limit": null, "documented_response_limit": null, "full_response_required_observed": null, "rate_limit_documented": null, "network_notes": [], "document_access": "official_downloads", "document_formats": ["csv"], "document_notes": [], "known_constraints": [], "unresolved": ["Pin the download API base URL."]
+        }
+      ]
+    },
+    "who_herams": {
+      "authority": {"id": "who", "name": "World Health Organization"}, "product_name": "HeRAMS", "relevance_class": "humanitarian_operational", "official_home": "https://herams.org/", "source_notes": [],
+      "interfaces": [{
+        "interface_id": "who_herams_exports", "interface_name": "HeRAMS exports", "interface_version": "current", "lifecycle": "current", "preferred": true, "l1_status": "partial", "l2_status": "credential_pending",
+        "official_docs": ["https://docs.herams.org/en/latest/"], "base_urls": [], "validated_at": null, "last_verified_at": "2026-08-26", "validation_basis": ["publisher_documentation_reviewed"],
+        "protocol_class": "official_export", "discovery_method": "workspace user interface", "data_access_method": "official downloads", "schema_discovery_method": "unknown", "formats": ["csv", "xlsx"], "auth_class": "permissioned_workspace", "credential_nature": "account", "credential_acquisition": "workspace_permission", "credential_ref": null, "access_scope_notes": ["Export depends on project/workspace permission."],
+        "server_side_filtering": "unknown", "pagination_method": "not_applicable", "documented_page_limit": null, "documented_response_limit": null, "full_response_required_observed": null, "rate_limit_documented": null, "network_notes": [], "document_access": "official_downloads", "document_formats": ["csv", "xlsx"], "document_notes": [], "known_constraints": [], "unresolved": ["No globally open generic API surface has been established."]
+      }]
+    },
+    "unicef_data": {
+      "authority": {"id": "unicef", "name": "UNICEF"}, "product_name": "UNICEF Data Warehouse", "relevance_class": "humanitarian_context", "official_home": "https://data.unicef.org/", "source_notes": [],
+      "interfaces": [{
+        "interface_id": "unicef_sdmx_public", "interface_name": "UNICEF public SDMX API", "interface_version": "current", "lifecycle": "current", "preferred": true, "l1_status": "validated", "l2_status": "not_attempted",
+        "official_docs": ["https://data.unicef.org/sdmx-api-documentation/"], "base_urls": ["https://sdmx.data.unicef.org/ws/public/sdmxapi/rest/"], "validated_at": "2026-08-26", "last_verified_at": "2026-08-26", "validation_basis": ["official_documentation_reviewed"],
+        "protocol_class": "sdmx_rest", "discovery_method": "dataflows/DSDs/codelists", "data_access_method": "SDMX REST", "schema_discovery_method": "sdmx_structures", "formats": ["sdmx-json", "sdmx-xml", "csv"], "auth_class": "anonymous", "credential_nature": "none", "credential_acquisition": "none", "credential_ref": null, "access_scope_notes": [],
+        "server_side_filtering": "yes", "pagination_method": "unknown", "documented_page_limit": null, "documented_response_limit": null, "full_response_required_observed": null, "rate_limit_documented": null, "network_notes": [], "document_access": "not_applicable", "document_formats": [], "document_notes": [], "known_constraints": ["Structural discovery is public; doctrine does not require a heavyweight SDMX client."], "unresolved": []
+      }]
+    },
+    "acled": {
+      "authority": {"id": "acled", "name": "ACLED"}, "product_name": "ACLED Conflict Event Data", "relevance_class": "humanitarian_operational", "official_home": "https://acleddata.com/", "source_notes": [],
+      "interfaces": [{
+        "interface_id": "acled_api", "interface_name": "ACLED API", "interface_version": "current", "lifecycle": "current", "preferred": true, "l1_status": "validated", "l2_status": "credential_pending",
+        "official_docs": ["https://acleddata.com/api-documentation/getting-started"], "base_urls": ["https://acleddata.com/api/"], "validated_at": "2026-08-26", "last_verified_at": "2026-08-26", "validation_basis": ["official_documentation_reviewed"],
+        "protocol_class": "rest", "discovery_method": "documentation", "data_access_method": "REST", "schema_discovery_method": "documentation", "formats": ["json"], "auth_class": "oauth2", "credential_nature": "secret", "credential_acquisition": "organization_tiered", "credential_ref": null, "access_scope_notes": ["A myACLED account is required.", "The access tier controls scope and features."],
+        "server_side_filtering": "yes", "pagination_method": "page_limit", "documented_page_limit": null, "documented_response_limit": null, "full_response_required_observed": false, "rate_limit_documented": null, "network_notes": [], "document_access": "not_applicable", "document_formats": [], "document_notes": [], "known_constraints": ["Programmatic access uses OAuth."], "unresolved": []
+      }]
+    },
+    "fews_net": {
+      "authority": {"id": "fews_net", "name": "FEWS NET"}, "product_name": "FEWS NET Data Platform / Data Warehouse", "relevance_class": "humanitarian_operational", "official_home": "https://fews.net/", "source_notes": ["A material service pause occurred during the 2025 U.S. foreign-assistance review; service relaunched in June 2025."],
+      "interfaces": [
+        {
+          "interface_id": "fews_fdw_public", "interface_name": "FEWS NET Data Warehouse public API", "interface_version": "current", "lifecycle": "current", "preferred": true, "l1_status": "validated", "l2_status": "not_attempted",
+          "official_docs": ["https://help.fews.net/fde/v3/fews-net-api"], "base_urls": ["https://fdw.fews.net/api"], "validated_at": "2026-08-26", "last_verified_at": "2026-08-26", "validation_basis": ["official_documentation_reviewed"],
+          "protocol_class": "rest", "discovery_method": "metadata endpoints", "data_access_method": "REST", "schema_discovery_method": "metadata_endpoints", "formats": ["json", "csv", "xml", "geojson", "kml"], "auth_class": "anonymous", "credential_nature": "none", "credential_acquisition": "none", "credential_ref": null, "access_scope_notes": ["Anonymous requests may return only a public subset."],
+          "server_side_filtering": "yes", "pagination_method": "unknown", "documented_page_limit": null, "documented_response_limit": null, "full_response_required_observed": null, "rate_limit_documented": null, "network_notes": [], "document_access": "unknown", "document_formats": [], "document_notes": [], "known_constraints": ["Insufficient permission may cause no-data or omitted data; negatives must preserve access scope."], "unresolved": []
+        },
+        {
+          "interface_id": "fews_fdw_authenticated", "interface_name": "FEWS NET Data Warehouse authenticated API", "interface_version": "current", "lifecycle": "current", "preferred": true, "l1_status": "validated", "l2_status": "credential_pending",
+          "official_docs": ["https://help.fews.net/fde/v3/fews-net-api"], "base_urls": ["https://fdw.fews.net/api"], "validated_at": "2026-08-26", "last_verified_at": "2026-08-26", "validation_basis": ["official_documentation_reviewed"],
+          "protocol_class": "rest", "discovery_method": "metadata endpoints", "data_access_method": "REST", "schema_discovery_method": "metadata_endpoints", "formats": ["json", "csv", "xml", "geojson", "kml"], "auth_class": "account_session", "credential_nature": "account", "credential_acquisition": "self_service_account", "credential_ref": null, "access_scope_notes": ["Token/session authentication can expand access according to permissions."],
+          "server_side_filtering": "yes", "pagination_method": "unknown", "documented_page_limit": null, "documented_response_limit": null, "full_response_required_observed": null, "rate_limit_documented": null, "network_notes": [], "document_access": "unknown", "document_formats": [], "document_notes": [], "known_constraints": [], "unresolved": []
+        }
+      ]
+    },
+    "gdacs": {
+      "authority": {"id": "gdacs", "name": "Global Disaster Alert and Coordination System"}, "product_name": "GDACS", "relevance_class": "humanitarian_operational", "official_home": "https://www.gdacs.org/", "source_notes": [],
+      "interfaces": [
+        {
+          "interface_id": "gdacs_rest", "interface_name": "GDACS REST API", "interface_version": "current", "lifecycle": "current", "preferred": true, "l1_status": "validated", "l2_status": "access_ready",
+          "official_docs": ["https://www.gdacs.org/gdacsapi/swagger/index.html"], "base_urls": ["https://www.gdacs.org/gdacsapi/api/"], "validated_at": "2026-08-26", "last_verified_at": "2026-08-27", "validation_basis": ["official_documentation_reviewed", "HDA first L2-A anonymous event-search data proof"],
+          "protocol_class": "rest_openapi", "discovery_method": "OpenAPI", "data_access_method": "REST", "schema_discovery_method": "openapi", "formats": ["json", "geojson"], "auth_class": "anonymous", "credential_nature": "none", "credential_acquisition": "none", "credential_ref": null, "access_scope_notes": ["Anonymous HTTP 200 GeoJSON access observed for the event-search operation."],
+          "server_side_filtering": "yes", "pagination_method": "pagenumber", "documented_page_limit": 100, "documented_response_limit": null, "full_response_required_observed": false, "rate_limit_documented": null, "network_notes": ["An event-search request with pageSize=2 and pageNumber=1 returned exactly two features; the response exposed no total count, so further pages remained possible."], "document_access": "not_applicable", "document_formats": [], "document_notes": [], "known_constraints": ["The official quickstart describes collection pagination and an approximately 100-record maximum per collection request."], "unresolved": []
+        },
+        {
+          "interface_id": "gdacs_feeds", "interface_name": "GDACS feeds", "interface_version": "current", "lifecycle": "current", "preferred": true, "l1_status": "validated", "l2_status": "not_attempted",
+          "official_docs": ["https://www.gdacs.org/contentdata/xml/"], "base_urls": ["https://www.gdacs.org/contentdata/xml/"], "validated_at": "2026-08-26", "last_verified_at": "2026-08-26", "validation_basis": ["official_feed_directory_reviewed"],
+          "protocol_class": "feed_cap_rss_kml", "discovery_method": "feed directory", "data_access_method": "feeds", "schema_discovery_method": "none", "formats": ["cap", "rss", "kml", "geojson"], "auth_class": "anonymous", "credential_nature": "none", "credential_acquisition": "none", "credential_ref": null, "access_scope_notes": [],
+          "server_side_filtering": "no", "pagination_method": "not_applicable", "documented_page_limit": null, "documented_response_limit": null, "full_response_required_observed": null, "rate_limit_documented": null, "network_notes": [], "document_access": "feeds", "document_formats": ["cap", "rss", "kml", "geojson"], "document_notes": [], "known_constraints": [], "unresolved": []
+        }
+      ]
+    },
+    "acaps": {
+      "authority": {"id": "acaps", "name": "ACAPS"}, "product_name": "ACAPS Humanitarian Datasets API", "relevance_class": "humanitarian_operational", "official_home": "https://www.acaps.org/", "source_notes": [],
+      "interfaces": [{
+        "interface_id": "acaps_api", "interface_name": "ACAPS API", "interface_version": "unknown", "lifecycle": "current", "preferred": true, "l1_status": "partial", "l2_status": "not_attempted",
+        "official_docs": ["https://api.acaps.org/"], "base_urls": ["https://api.acaps.org/"], "validated_at": null, "last_verified_at": "2026-08-26", "validation_basis": ["publisher_material_reviewed"],
+        "protocol_class": "rest", "discovery_method": "unknown", "data_access_method": "REST", "schema_discovery_method": "unknown", "formats": ["json"], "auth_class": "unknown", "credential_nature": "unknown", "credential_acquisition": "unknown", "credential_ref": null, "access_scope_notes": [],
+        "server_side_filtering": "unknown", "pagination_method": "unknown", "documented_page_limit": null, "documented_response_limit": null, "full_response_required_observed": null, "rate_limit_documented": null, "network_notes": [], "document_access": "unknown", "document_formats": [], "document_notes": [], "known_constraints": ["The official API site advertises global humanitarian datasets via REST."], "unresolved": ["Close exact current authentication, token acquisition, and version details before L2."]
+      }]
+    },
+    "inform": {
+      "authority": {"id": "ec_jrc", "name": "European Commission Joint Research Centre / INFORM partners"}, "product_name": "INFORM Risk / Severity family", "relevance_class": "humanitarian_context", "official_home": "https://drmkc.jrc.ec.europa.eu/inform-index/", "source_notes": [],
+      "interfaces": [{
+        "interface_id": "inform_web_api", "interface_name": "INFORM Web API", "interface_version": "unknown", "lifecycle": "current", "preferred": true, "l1_status": "partial", "l2_status": "not_attempted",
+        "official_docs": ["https://drmkc.jrc.ec.europa.eu/inform-index/"], "base_urls": [], "validated_at": null, "last_verified_at": "2026-08-26", "validation_basis": ["official_JRC_material_reviewed"],
+        "protocol_class": "rest", "discovery_method": "unknown", "data_access_method": "Web API and downloads", "schema_discovery_method": "documentation", "formats": ["json", "xlsx"], "auth_class": "unknown", "credential_nature": "unknown", "credential_acquisition": "unknown", "credential_ref": null, "access_scope_notes": [],
+        "server_side_filtering": "unknown", "pagination_method": "unknown", "documented_page_limit": null, "documented_response_limit": null, "full_response_required_observed": null, "rate_limit_documented": null, "network_notes": [], "document_access": "official_downloads", "document_formats": ["xlsx"], "document_notes": [], "known_constraints": ["Official JRC material confirms JSON Web API plus Excel/download access."], "unresolved": ["Pin the current canonical endpoint, version, and authentication before L2 because some documentation is older than the 2026 product."]
+      }]
+    },
+    "ifrc_go": {
+      "authority": {"id": "ifrc", "name": "International Federation of Red Cross and Red Crescent Societies"}, "product_name": "IFRC GO", "relevance_class": "humanitarian_operational", "official_home": "https://go.ifrc.org/", "source_notes": [],
+      "interfaces": [{
+        "interface_id": "ifrc_go_api", "interface_name": "IFRC GO API", "interface_version": "unknown", "lifecycle": "current", "preferred": true, "l1_status": "partial", "l2_status": "not_attempted",
+        "official_docs": ["https://go.ifrc.org/"], "base_urls": ["https://go-api.ifrc.org/"], "validated_at": null, "last_verified_at": "2026-08-26", "validation_basis": ["publisher_material_reviewed"],
+        "protocol_class": "rest", "discovery_method": "unknown", "data_access_method": "REST", "schema_discovery_method": "unknown", "formats": ["json"], "auth_class": "unknown", "credential_nature": "unknown", "credential_acquisition": "unknown", "credential_ref": null, "access_scope_notes": [],
+        "server_side_filtering": "unknown", "pagination_method": "unknown", "documented_page_limit": null, "documented_response_limit": null, "full_response_required_observed": null, "rate_limit_documented": null, "network_notes": [], "document_access": "reports", "document_formats": [], "document_notes": [], "known_constraints": ["The GO site links official API documentation; the live API host is established."], "unresolved": ["Establish exact authentication, schema, and version during L2."]
+      }]
+    },
+    "idmc": {
+      "authority": {"id": "idmc", "name": "Internal Displacement Monitoring Centre"}, "product_name": "Global Internal Displacement Database", "relevance_class": "humanitarian_operational", "official_home": "https://www.internal-displacement.org/database/", "source_notes": [],
+      "interfaces": [{
+        "interface_id": "idmc_gidd_api", "interface_name": "IDMC GIDD API", "interface_version": "unknown", "lifecycle": "current", "preferred": true, "l1_status": "partial", "l2_status": "not_attempted",
+        "official_docs": ["https://www.internal-displacement.org/database/"], "base_urls": [], "validated_at": null, "last_verified_at": "2026-08-26", "validation_basis": ["publisher_material_reviewed"],
+        "protocol_class": "rest", "discovery_method": "unknown", "data_access_method": "REST", "schema_discovery_method": "documentation", "formats": ["json", "geojson"], "auth_class": "unknown", "credential_nature": "unknown", "credential_acquisition": "unknown", "credential_ref": null, "access_scope_notes": [],
+        "server_side_filtering": "unknown", "pagination_method": "unknown", "documented_page_limit": null, "documented_response_limit": null, "full_response_required_observed": null, "rate_limit_documented": null, "network_notes": [], "document_access": "unknown", "document_formats": [], "document_notes": [], "known_constraints": ["The current database links API documentation; historical official material documents event-level JSON and GeoJSON."], "unresolved": ["Pin the current canonical API endpoint.", "Establish incremental value beyond IDMC data already surfaced through UNHCR."]
+      }]
+    },
+    "wfp_vam": {
+      "authority": {"id": "wfp", "name": "World Food Programme"}, "product_name": "VAM / Economic Explorer / HungerMap family", "relevance_class": "humanitarian_operational", "official_home": "https://dataviz.vam.wfp.org/", "source_notes": [],
+      "interfaces": [{
+        "interface_id": "wfp_vam_exports", "interface_name": "WFP VAM exports", "interface_version": "current", "lifecycle": "current", "preferred": true, "l1_status": "partial", "l2_status": "not_attempted",
+        "official_docs": ["https://dataviz.vam.wfp.org/"], "base_urls": ["https://dataviz.vam.wfp.org/"], "validated_at": null, "last_verified_at": "2026-08-26", "validation_basis": ["publisher_material_reviewed"],
+        "protocol_class": "official_export", "discovery_method": "publisher user interface", "data_access_method": "official downloads", "schema_discovery_method": "unknown", "formats": ["csv", "xlsx", "other"], "auth_class": "anonymous", "credential_nature": "none", "credential_acquisition": "none", "credential_ref": null, "access_scope_notes": [],
+        "server_side_filtering": "unknown", "pagination_method": "not_applicable", "documented_page_limit": null, "documented_response_limit": null, "full_response_required_observed": null, "rate_limit_documented": null, "network_notes": [], "document_access": "official_downloads", "document_formats": ["csv", "xlsx", "other"], "document_notes": [], "known_constraints": ["DataViz/Economic Explorer is operationally rich, but a stable public developer API was not established."], "unresolved": ["Official material says users may contact WFP for API access when exports are insufficient."]
+      }]
+    },
+    "fao_fpma": {
+      "authority": {"id": "fao", "name": "Food and Agriculture Organization"}, "product_name": "GIEWS Food Price Monitoring and Analysis (FPMA)", "relevance_class": "humanitarian_operational", "official_home": "https://fpma.fao.org/", "source_notes": [],
+      "interfaces": [{
+        "interface_id": "fao_fpma_exports", "interface_name": "FPMA exports", "interface_version": "v4", "lifecycle": "current", "preferred": true, "l1_status": "validated", "l2_status": "not_attempted",
+        "official_docs": ["https://www.fao.org/giews/food-prices/price-tool/en/"], "base_urls": ["https://fpma.fao.org/"], "validated_at": "2026-08-26", "last_verified_at": "2026-08-26", "validation_basis": ["official_download_reviewed"],
+        "protocol_class": "official_export", "discovery_method": "publisher user interface", "data_access_method": "official downloads", "schema_discovery_method": "unknown", "formats": ["csv", "xlsx", "other"], "auth_class": "anonymous", "credential_nature": "none", "credential_acquisition": "none", "credential_ref": null, "access_scope_notes": [],
+        "server_side_filtering": "unknown", "pagination_method": "not_applicable", "documented_page_limit": null, "documented_response_limit": null, "full_response_required_observed": null, "rate_limit_documented": null, "network_notes": [], "document_access": "official_downloads", "document_formats": ["csv", "xlsx", "other"], "document_notes": [], "known_constraints": ["The current official food-price tool/download exists; a canonical well-documented public REST API was not established."], "unresolved": []
+      }]
+    },
+    "unosat": {
+      "authority": {"id": "unitar", "name": "UNITAR / UNOSAT"}, "product_name": "UNOSAT satellite analysis products", "relevance_class": "humanitarian_operational", "official_home": "https://unosat.org/", "source_notes": [],
+      "interfaces": [{
+        "interface_id": "unosat_products_geoservices", "interface_name": "UNOSAT products and geoservices", "interface_version": "current", "lifecycle": "current", "preferred": true, "l1_status": "partial", "l2_status": "not_attempted",
+        "official_docs": [], "base_urls": [], "validated_at": null, "last_verified_at": "2026-08-26", "validation_basis": ["publisher_material_reviewed"],
+        "protocol_class": "arcgis_rest", "discovery_method": "unknown", "data_access_method": "product geoservices and documents", "schema_discovery_method": "arcgis_service_metadata", "formats": ["geojson", "arcgis", "imagery", "documents"], "auth_class": "unknown", "credential_nature": "unknown", "credential_acquisition": "unknown", "credential_ref": null, "access_scope_notes": [],
+        "server_side_filtering": "unknown", "pagination_method": "unknown", "documented_page_limit": null, "documented_response_limit": null, "full_response_required_observed": null, "rate_limit_documented": null, "network_notes": [], "document_access": "mixed", "document_formats": ["imagery", "documents"], "document_notes": [], "known_constraints": ["Operational satellite-analysis products exist; no single canonical stable public UNOSAT API was established."], "unresolved": ["Identify canonical product and geoservice families before any generic adapter."]
+      }]
+    },
+    "world_bank_indicators": {
+      "authority": {"id": "world_bank", "name": "World Bank"}, "product_name": "World Bank Indicators API", "relevance_class": "socioeconomic_context", "official_home": "https://data.worldbank.org/", "source_notes": [],
+      "interfaces": [{
+        "interface_id": "world_bank_indicators_v2", "interface_name": "World Bank Indicators API", "interface_version": "v2", "lifecycle": "current", "preferred": true, "l1_status": "validated", "l2_status": "not_attempted",
+        "official_docs": ["https://datahelpdesk.worldbank.org/knowledgebase/articles/889392"], "base_urls": ["https://api.worldbank.org/v2/"], "validated_at": "2026-08-26", "last_verified_at": "2026-08-26", "validation_basis": ["official_documentation_reviewed"],
+        "protocol_class": "rest", "discovery_method": "documentation", "data_access_method": "REST", "schema_discovery_method": "documentation", "formats": ["json", "xml", "jsonstat", "csv", "xlsx"], "auth_class": "anonymous", "credential_nature": "none", "credential_acquisition": "none", "credential_ref": null, "access_scope_notes": [],
+        "server_side_filtering": "yes", "pagination_method": "page_limit", "documented_page_limit": null, "documented_response_limit": null, "full_response_required_observed": false, "rate_limit_documented": null, "network_notes": [], "document_access": "not_applicable", "document_formats": [], "document_notes": [], "known_constraints": ["This is a socioeconomic contextual source, not a substitute for humanitarian operational evidence."], "unresolved": []
+      }]
+    }
+  }
+}
