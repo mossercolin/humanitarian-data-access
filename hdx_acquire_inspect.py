@@ -15,7 +15,13 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import Any, BinaryIO
 
-from hda_http import ResponseTooLarge, require_http_url
+from hda_http import (
+    ResponseTooLarge,
+    open_http,
+    read_http_chunk,
+    require_complete_length,
+    require_http_url,
+)
 
 
 CATALOG_NAME = "Humanitarian Data Exchange (HDX)"
@@ -107,13 +113,20 @@ def inspect_stream(stream: BinaryIO, declared_format: str, byte_limit: int | Non
 def disposable_inspect(url: str, declared_format: str, byte_limit: int, sample_rows: int, timeout: float,
                        csv_field_size_limit: int = DEFAULT_CSV_FIELD_SIZE_LIMIT) -> dict[str, Any]:
     request = urllib.request.Request(require_http_url(url), headers={"User-Agent": "humanitarian-data-access/inspect"})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        result = inspect_stream(response, declared_format, byte_limit, sample_rows, csv_field_size_limit)
+    with open_http(request, timeout=timeout) as response:
+        received = read_http_chunk(response, byte_limit + 1, "disposable inspection")
+        result = inspect_stream(
+            io.BytesIO(received), declared_format, byte_limit, sample_rows, csv_field_size_limit
+        )
         content_length = response.headers.get("Content-Length")
+        if result["retrieval_complete"]:
+            require_complete_length(result["bytes_examined"], response.headers, "disposable inspection")
+        final_response_url = response.geturl()
     result.update({
         "mode": "disposable_inspection",
         "durable": False,
         "source_url": url,
+        "final_response_url": final_response_url,
         "declared_size_bytes": int(content_length) if content_length and content_length.isdigit() else None,
         "inspection_byte_limit": byte_limit,
         "local_path": None,
@@ -138,14 +151,18 @@ def acquire(url: str, dataset_id: str, resource_id: str, destination: pathlib.Pa
     metadata_temporary_name: str | None = None
     published_new_destination = False
     try:
-        with os.fdopen(fd, "wb") as output, urllib.request.urlopen(request, timeout=timeout) as response:
+        with os.fdopen(fd, "wb") as output, open_http(request, timeout=timeout) as response:
             content_length = response.headers.get("Content-Length")
             if content_length and content_length.isdigit() and int(content_length) > byte_limit:
                 raise ResponseTooLarge(
                     f"durable acquisition exceeds the {byte_limit}-byte limit "
                     f"(Content-Length: {content_length}); use --byte-limit with an expected larger size"
                 )
-            while chunk := response.read(min(DOWNLOAD_CHUNK_SIZE, byte_limit - size + 1)):
+            while chunk := read_http_chunk(
+                response,
+                min(DOWNLOAD_CHUNK_SIZE, byte_limit - size + 1),
+                "durable acquisition",
+            ):
                 if size + len(chunk) > byte_limit:
                     raise ResponseTooLarge(
                         f"durable acquisition exceeds the {byte_limit}-byte limit; "
@@ -154,6 +171,8 @@ def acquire(url: str, dataset_id: str, resource_id: str, destination: pathlib.Pa
                 output.write(chunk)
                 digest.update(chunk)
                 size += len(chunk)
+            require_complete_length(size, response.headers, "durable acquisition")
+            final_response_url = response.geturl()
             output.flush()
             os.fsync(output.fileno())
         metadata = {
@@ -162,6 +181,7 @@ def acquire(url: str, dataset_id: str, resource_id: str, destination: pathlib.Pa
         "native_dataset_id": dataset_id,
         "native_resource_id": resource_id,
         "source_url": url,
+        "final_response_url": final_response_url,
         "retrieved_at_utc": _timestamp(),
         "size_bytes": size,
         "sha256": digest.hexdigest(),

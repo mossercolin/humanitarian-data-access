@@ -15,7 +15,7 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Sequence
 
-from hda_http import read_limited, require_http_url
+from hda_http import open_http, read_limited, remote_json_loads, require_http_url
 
 
 OPENAPI_URL = "https://hapi.humdata.org/openapi.json"
@@ -37,11 +37,11 @@ def _timestamp() -> str:
 
 def _request_json(url: str, timeout: float) -> dict[str, Any]:
     request = urllib.request.Request(require_http_url(url), headers={"Accept": "application/json", "User-Agent": USER_AGENT})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with open_http(request, timeout=timeout) as response:
         body = read_limited(response, API_RESPONSE_LIMIT, "HDX HAPI API response", response.headers)
         try:
-            payload = json.loads(body)
-        except json.JSONDecodeError as exc:
+            payload = remote_json_loads(body)
+        except ValueError as exc:
             raise ValueError(
                 f"server returned invalid JSON (HTTP {response.status}, content-type {response.headers.get('Content-Type')!r}, bytes {len(body)})"
             ) from exc

@@ -14,7 +14,7 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
 
-from hda_http import read_limited, require_http_url
+from hda_http import open_http, read_limited, remote_json_loads, require_http_url
 
 
 SOURCE_ID = "unfpa_population_data_portal"
@@ -32,6 +32,7 @@ METADATA_LIMIT = 1024 * 1024
 DATA_LIMIT = 1024 * 1024
 MAX_QUERY_RECORDS = 100
 MAX_STDOUT_RECORDS = 10
+DEFAULT_STDOUT_BYTES_LIMIT = 256 * 1024
 USER_AGENT = "hda-unfpa-arcgis/1.0"
 PROOF_FIELDS = (
     "objectid", "geography_name", "country", "m49_code", "region_name",
@@ -52,17 +53,18 @@ def _request_json(url: str, parameters: Mapping[str, str], limit: int, operation
         require_http_url(source_url),
         headers={"Accept": "application/json", "User-Agent": USER_AGENT},
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with open_http(request, timeout=timeout) as response:
         body = read_limited(response, limit, operation, response.headers)
         network = {
             "http_status": response.status,
             "content_type": response.headers.get("Content-Type"),
             "response_bytes": len(body),
             "response_limit_bytes": limit,
+            "final_response_url": response.geturl(),
         }
     try:
-        payload = json.loads(body)
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        payload = remote_json_loads(body)
+    except (UnicodeDecodeError, ValueError) as exc:
         raise ValueError(f"{operation} returned invalid JSON ({network})") from exc
     if not isinstance(payload, dict):
         raise ValueError(f"{operation} did not return a JSON object")
@@ -106,7 +108,11 @@ def _inspect(metadata: Mapping[str, Any]) -> dict[str, Any]:
     advanced = layer.get("advancedQueryCapabilities")
     description = _visible_text(service.get("serviceDescription", ""))
     required = set(PROOF_FIELDS) | {"ld_ranking"}
-    names = {item.get("name") for item in fields or [] if isinstance(item, dict)}
+    if not isinstance(fields, list):
+        raise ValueError("live layer metadata lacks required native maternal mortality fields")
+    if not all(isinstance(field, dict) for field in fields):
+        raise ValueError("live layer metadata fields must contain only JSON objects")
+    names = {item.get("name") for item in fields}
     if root.get("currentVersion") is None:
         raise ValueError("live ArcGIS services root lacks currentVersion")
     if service.get("serviceItemId") != SERVICE_ITEM_ID:
@@ -115,7 +121,7 @@ def _inspect(metadata: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError("live layer identity does not match pinned layer 0 hv_i52_gl2")
     if _section(description, "Short Name") != INDICATOR:
         raise ValueError("live service metadata no longer identifies the maternal mortality ratio")
-    if not isinstance(fields, list) or not required.issubset(names):
+    if not required.issubset(names):
         raise ValueError("live layer metadata lacks required native maternal mortality fields")
     if "Query" not in str(layer.get("capabilities", "")).split(","):
         raise ValueError("live layer does not advertise Query capability")
@@ -236,6 +242,15 @@ def _nonnegative(value: str) -> int:
     return parsed
 
 
+def _stdout_bytes(result: dict[str, Any], limit: int) -> bytes:
+    normal = (json.dumps(result, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False) + "\n").encode("utf-8")
+    if len(normal) <= limit: return normal
+    envelope = {"schema_version": "hda-output-limit-envelope/v1", "source_id": SOURCE_ID, "interface_id": INTERFACE_ID, "request_scope": result.get("request_scope", {"operation": "discover", "service_path": SERVICE_PATH, "layer_id": LAYER_ID}), "provenance": {"lineage": result["lineage"], "network": result["network"]}, "counts": {"response_feature_count": result["network"].get("response_feature_count")}, "stdout_bytes_limit": limit, "normal_serialized_bytes": len(normal), "output_limit_exceeded": True, "data_omitted": True, "reason": "Publisher records/data were omitted because the serialized model-facing stdout limit was exceeded."}
+    emitted = (json.dumps(envelope, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False) + "\n").encode("utf-8")
+    if len(emitted) > limit: raise ValueError("output-limit envelope exceeds stdout byte limit")
+    return emitted
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -245,15 +260,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     q.add_argument("--result-record-count", type=_positive, default=5)
     q.add_argument("--stdout-records", type=_positive, default=MAX_STDOUT_RECORDS)
     parser.add_argument("--timeout", type=float, default=30.0)
+    parser.add_argument("--stdout-bytes-limit", type=_positive, default=DEFAULT_STDOUT_BYTES_LIMIT, help=f"serialized UTF-8 stdout ceiling including newline; deliberate increase only (default: {DEFAULT_STDOUT_BYTES_LIMIT} bytes)")
     args = parser.parse_args(argv)
     try:
         if args.timeout <= 0:
             raise ValueError("timeout must be positive")
+        if args.stdout_bytes_limit < DEFAULT_STDOUT_BYTES_LIMIT:
+            raise ValueError(f"--stdout-bytes-limit must be at least the default {DEFAULT_STDOUT_BYTES_LIMIT}")
         result = discover(args.timeout) if args.command == "discover" else query(
             args.result_offset, args.result_record_count, args.stdout_records, args.timeout
         )
-        json.dump(result, sys.stdout, ensure_ascii=False, sort_keys=True, indent=2)
-        print()
+        sys.stdout.buffer.write(_stdout_bytes(result, args.stdout_bytes_limit))
         return 0
     except (OSError, ValueError, KeyError, TypeError, urllib.error.URLError) as exc:
         parser.exit(1, f"HDA UNFPA ArcGIS operation failed: {exc}\n")
