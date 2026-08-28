@@ -6,18 +6,26 @@ import argparse
 import hashlib
 import io
 import json
+import os
 import pathlib
 import re
 import sys
+import tempfile
 import urllib.parse
 import urllib.request
 import zipfile
 from datetime import datetime, timezone
 from typing import Any, Sequence
 
+from hda_http import read_limited, require_http_url
+
 
 CKAN_ACTION = "https://data.humdata.org/api/3/action"
 USER_AGENT = "hda-geo/1.0"
+API_RESPONSE_LIMIT = 16 * 1024 * 1024
+DEFAULT_ARCHIVE_LIMIT = 256 * 1024 * 1024
+DEFAULT_GEOJSON_MEMBER_LIMIT = 512 * 1024 * 1024
+DECOMPRESSION_CHUNK_SIZE = 1024 * 1024
 
 
 def _timestamp() -> str:
@@ -26,9 +34,9 @@ def _timestamp() -> str:
 
 def _request_json(action: str, parameters: dict[str, Any], timeout: float) -> dict[str, Any]:
     url = f"{CKAN_ACTION}/{action}?{urllib.parse.urlencode(parameters)}"
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    request = urllib.request.Request(require_http_url(url), headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(request, timeout=timeout) as response:
-        payload = json.load(response)
+        payload = json.loads(read_limited(response, API_RESPONSE_LIMIT, "HDX COD catalog API response", response.headers))
     if not payload.get("success") or not isinstance(payload.get("result"), (dict, list)):
         raise ValueError(f"HDX CKAN {action} did not return a successful result")
     return {"url": url, "result": payload["result"]}
@@ -65,25 +73,48 @@ def _resource(dataset: dict[str, Any]) -> dict[str, Any]:
     return resources[0]
 
 
-def _archive(url: str, timeout: float) -> tuple[bytes, str]:
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+def _archive(url: str, timeout: float, byte_limit: int = DEFAULT_ARCHIVE_LIMIT) -> tuple[bytes, str]:
+    request = urllib.request.Request(require_http_url(url), headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(request, timeout=timeout) as response:
-        data = response.read()
+        data = read_limited(response, byte_limit, "COD-AB remote archive", response.headers)
     return data, hashlib.sha256(data).hexdigest()
 
 
-def _feature_collection(data: bytes, admin_level: int) -> tuple[str, dict[str, Any]]:
+def _read_member_limited(stream: Any, byte_limit: int) -> bytes:
+    chunks = []
+    size = 0
+    while chunk := stream.read(min(DECOMPRESSION_CHUNK_SIZE, byte_limit - size + 1)):
+        size += len(chunk)
+        if size > byte_limit:
+            raise ValueError(
+                f"decompressed GeoJSON member exceeds the {byte_limit}-byte limit; "
+                "use --geojson-member-byte-limit with an expected larger size"
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _feature_collection(data: bytes, admin_level: int,
+                        member_byte_limit: int = DEFAULT_GEOJSON_MEMBER_LIMIT) -> tuple[str, dict[str, Any]]:
     pattern = re.compile(rf"(^|/)[a-z]{{3}}_admin{admin_level}\.geojson$", re.IGNORECASE)
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
-        members = [name for name in archive.namelist() if pattern.search(name)]
+        members = [item for item in archive.infolist() if pattern.search(item.filename)]
         if len(members) != 1:
-            raise ValueError(f"expected one non-edge-matched admin{admin_level} GeoJSON member; found {members}")
-        payload = json.load(archive.open(members[0]))
+            raise ValueError(f"expected one non-edge-matched admin{admin_level} GeoJSON member; found {[item.filename for item in members]}")
+        member = members[0]
+        if member.file_size > member_byte_limit:
+            raise ValueError(
+                f"declared uncompressed GeoJSON member size {member.file_size} exceeds the "
+                f"{member_byte_limit}-byte limit; use --geojson-member-byte-limit with an expected larger size"
+            )
+        with archive.open(member) as stream:
+            document = _read_member_limited(stream, member_byte_limit)
+        payload = json.loads(document)
     if payload.get("type") != "FeatureCollection" or not isinstance(payload.get("features"), list):
         raise ValueError("COD-AB member is not a GeoJSON FeatureCollection")
     if not payload["features"]:
         raise ValueError("COD-AB FeatureCollection is empty")
-    return members[0], payload
+    return member.filename, payload
 
 
 def _identity(feature: dict[str, Any], admin_level: int) -> dict[str, Any]:
@@ -112,11 +143,13 @@ def _identity(feature: dict[str, Any], admin_level: int) -> dict[str, Any]:
     }
 
 
-def access(country: str, admin_level: int, timeout: float) -> tuple[dict[str, Any], dict[str, Any]]:
+def access(country: str, admin_level: int, timeout: float,
+           archive_byte_limit: int = DEFAULT_ARCHIVE_LIMIT,
+           geojson_member_byte_limit: int = DEFAULT_GEOJSON_MEMBER_LIMIT) -> tuple[dict[str, Any], dict[str, Any]]:
     dataset, request_lineage = _dataset(country, timeout)
     resource = _resource(dataset)
-    archive, digest = _archive(resource["url"], timeout)
-    member, geojson = _feature_collection(archive, admin_level)
+    archive, digest = _archive(resource["url"], timeout, archive_byte_limit)
+    member, geojson = _feature_collection(archive, admin_level, geojson_member_byte_limit)
     crs = geojson.get("crs")
     crs_claim = (
         "source CRS declaration preserved; no transformation or EPSG equivalence asserted"
@@ -156,9 +189,24 @@ def access(country: str, admin_level: int, timeout: float) -> tuple[dict[str, An
     return result, geojson
 
 
-def _write_json(path: pathlib.Path, payload: Any) -> None:
+def _write_json(path: pathlib.Path, payload: Any, force: bool = False) -> None:
+    if path.exists() and not force:
+        raise FileExistsError(f"output already exists: {path}; use --force to replace it")
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    fd, temporary = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(payload, stream, indent=2, sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        raise
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -171,17 +219,40 @@ def main(argv: Sequence[str] | None = None) -> int:
     boundary.add_argument("country")
     boundary.add_argument("--admin-level", type=int, default=0)
     boundary.add_argument("--output", type=pathlib.Path, required=True, help="GeoJSON FeatureCollection output")
+    boundary.add_argument("--force", action="store_true", help="deliberately replace an existing GeoJSON output")
     boundary.add_argument("--timeout", type=float, default=60)
+    for command in (resolve, boundary):
+        command.add_argument(
+            "--archive-byte-limit",
+            type=int,
+            default=DEFAULT_ARCHIVE_LIMIT,
+            help=f"maximum COD-AB archive response bytes (default: {DEFAULT_ARCHIVE_LIMIT}); increase deliberately for an expected large archive",
+        )
+        command.add_argument(
+            "--geojson-member-byte-limit",
+            type=int,
+            default=DEFAULT_GEOJSON_MEMBER_LIMIT,
+            help=f"maximum decompressed selected GeoJSON member bytes (default: {DEFAULT_GEOJSON_MEMBER_LIMIT}); increase deliberately for an expected large boundary",
+        )
     args = parser.parse_args(argv)
     try:
         level = 0 if args.operation == "resolve" else args.admin_level
         if not 0 <= level <= 9:
             raise ValueError("admin level must be between 0 and 9")
-        result, geojson = access(args.country, level, args.timeout)
+        if args.archive_byte_limit < 1:
+            raise ValueError("archive byte limit must be positive")
+        if args.geojson_member_byte_limit < 1:
+            raise ValueError("GeoJSON member byte limit must be positive")
+        if args.operation == "boundary" and args.output.exists() and not args.force:
+            raise FileExistsError(f"output already exists: {args.output}; use --force to replace it")
+        result, geojson = access(
+            args.country, level, args.timeout, args.archive_byte_limit,
+            args.geojson_member_byte_limit,
+        )
         if args.operation == "resolve":
             result["identities"] = result["identities"][:1]
         else:
-            _write_json(args.output, geojson)
+            _write_json(args.output, geojson, args.force)
             result["geojson_output"] = str(args.output)
         print(json.dumps(result, indent=2, sort_keys=True))
         return 0

@@ -19,7 +19,7 @@ HDA is licensed under the Apache License 2.0; see `LICENSE`.
 
 ## Requirements
 
-- Python 3.9 or newer; v0.1.0 uses only the Python standard library.
+- Python 3.9 or newer; this candidate uses only the Python standard library.
 - Network access to the selected public source for discovery or live queries.
 - No pip installation is required.
 - A skill-capable agent environment is optional and required only for
@@ -47,7 +47,18 @@ surface.
 Routine queries return bounded JSON to stdout and do not silently save query
 results. Durable output remains available through explicit `--output` options,
 or `--output-dir` for `hda_query.py`. HDX acquisition requires an explicit
-output path because preserving selected source bytes is its purpose.
+output path because preserving selected source bytes is its purpose. Durable
+outputs never replace an existing destination by default. Use `--force` only
+when deliberate replacement is intended; HDX acquisition applies the decision
+to both the acquired bytes and their `.acquisition.json` sidecar.
+
+Remote inputs and redirects are restricted to HTTP(S). API response bodies are
+bounded at 16 MiB. HDX acquisition defaults to 64 MiB; disposable inspection to
+1,000,000 bytes; local inspection and local query inputs to 64 MiB; COD-AB
+archives to 256 MiB; and the selected decompressed GeoJSON member to 512 MiB.
+CSV fields have a finite default parser limit of 1 MiB. The relevant CLI limit
+option may be increased deliberately for an expected larger input; record and
+pagination ceilings remain enforced by each source command.
 
 ## Expose the agent Skill
 

@@ -16,11 +16,14 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Sequence
 
+from hda_http import read_limited, require_http_url
+
 
 SOURCE_ID = "unhcr_refugee_statistics"
 INTERFACE_ID = "unhcr_refugee_stats_v1"
 BASE_URL = "https://api.unhcr.org/population/v1"
 DOCS_URL = "https://api.unhcr.org/docs/refugee-statistics.html"
+API_RESPONSE_LIMIT = 16 * 1024 * 1024
 OPERATIONS = (
     "asylum-applications", "asylum-decisions", "countries", "demographics",
     "footnotes", "idmc", "nowcasting", "population", "regions", "solutions",
@@ -38,9 +41,9 @@ def _timestamp() -> str:
 
 
 def _request_json(url: str, timeout: float) -> tuple[Any, dict[str, Any]]:
-    request = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": USER_AGENT})
+    request = urllib.request.Request(require_http_url(url), headers={"Accept": "application/json", "User-Agent": USER_AGENT})
     with urllib.request.urlopen(request, timeout=timeout) as response:
-        body = response.read()
+        body = read_limited(response, API_RESPONSE_LIMIT, "UNHCR API response", response.headers)
         facts = {
             "http_status": response.status,
             "content_type": response.headers.get("Content-Type"),
@@ -90,8 +93,10 @@ def _records(payload: Any) -> list[Any]:
     return payload["items"]
 
 
-def _write_json(path: pathlib.Path, payload: Any) -> str:
+def _write_json(path: pathlib.Path, payload: Any, force: bool = False) -> str:
     path = path.resolve()
+    if path.exists() and not force:
+        raise FileExistsError(f"output already exists: {path}; use --force to replace it")
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
     try:
@@ -107,7 +112,9 @@ def _write_json(path: pathlib.Path, payload: Any) -> str:
 
 def query(operation: str, parameters: list[tuple[str, str]], start_page: int, page_size: int,
           max_records: int, stdout_records: int, output: pathlib.Path | None,
-          timeout: float) -> dict[str, Any]:
+          timeout: float, force: bool = False) -> dict[str, Any]:
+    if output is not None and output.exists() and not force:
+        raise FileExistsError(f"output already exists: {output}; use --force to replace it")
     if operation not in OPERATIONS:
         raise ValueError(f"unknown operation {operation!r}; run 'hda_unhcr.py list'")
     retrieved_at = _timestamp()
@@ -141,7 +148,7 @@ def query(operation: str, parameters: list[tuple[str, str]], start_page: int, pa
         "network": {"anonymous": True, "requests": network, "pages_retrieved": pages_retrieved, "records_retrieved": len(records), "reported_max_pages": max_pages},
         "records": records,
     }
-    artifact_path = _write_json(output, complete) if output else None
+    artifact_path = _write_json(output, complete, force) if output else None
     return {
         **{key: complete[key] for key in ("schema_version", "source_id", "interface_id", "operation", "request_scope", "lineage", "network")},
         "result": {"returned_count": len(records), "returned_to_stdout": min(len(records), stdout_records), "truncated_for_stdout": len(records) > stdout_records, "complete_result_artifact": artifact_path, "records": records[:stdout_records]},
@@ -168,6 +175,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     query_parser.add_argument("--max-records", type=_positive, default=DEFAULT_MAX_RECORDS)
     query_parser.add_argument("--stdout-records", type=_positive, default=DEFAULT_STDOUT_RECORDS)
     query_parser.add_argument("--output", type=pathlib.Path)
+    query_parser.add_argument("--force", action="store_true", help="deliberately replace an existing output artifact")
     parser.add_argument("--timeout", type=float, default=30.0)
     args = parser.parse_args(argv)
     try:
@@ -178,7 +186,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             if args.max_records > MAX_RECORDS:
                 raise ValueError(f"max records cannot exceed {MAX_RECORDS}")
-            result = query(args.operation.strip("/"), _parse_params(args.param), args.start_page, args.page_size, args.max_records, args.stdout_records, args.output, args.timeout)
+            result = query(args.operation.strip("/"), _parse_params(args.param), args.start_page, args.page_size, args.max_records, args.stdout_records, args.output, args.timeout, args.force)
         json.dump(result, sys.stdout, ensure_ascii=False, sort_keys=True, indent=2)
         print()
         return 0

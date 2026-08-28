@@ -11,11 +11,14 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Sequence
 
+from hda_http import read_limited, require_http_url
+
 
 CATALOG_API = "https://data.humdata.org/api/3/action/package_search"
 MAX_CANDIDATES = 100
 MAX_RESOURCES = 100
 DESCRIPTION_LIMIT = 500
+API_RESPONSE_LIMIT = 16 * 1024 * 1024
 
 
 def _bounded_text(value: Any, limit: int = DESCRIPTION_LIMIT) -> str | None:
@@ -76,11 +79,11 @@ def discover(
     params.extend(("fq", value) for value in filters)
     request_url = CATALOG_API + "?" + urllib.parse.urlencode(params)
     request = urllib.request.Request(
-        request_url,
+        require_http_url(request_url),
         headers={"Accept": "application/json", "User-Agent": "humanitarian-data-access/hdx-discover"},
     )
     with urllib.request.urlopen(request, timeout=timeout) as response:
-        payload = json.load(response)
+        payload = json.loads(read_limited(response, API_RESPONSE_LIMIT, "HDX catalog API response", response.headers))
 
     if payload.get("success") is not True or not isinstance(payload.get("result"), dict):
         raise ValueError("HDX CKAN returned an unsuccessful or malformed response")

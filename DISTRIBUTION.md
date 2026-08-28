@@ -14,16 +14,25 @@ Build an HDA product directory from empty by copying only this allowlist:
 - `hda_unhcr.py`
 - `hda_gdacs.py`
 - `hda_geo.py`
+- `hda_http.py`
 - `skill/humanitarian-data-access/SKILL.md`
 
-This allowlist contains exactly 13 files.
+This allowlist contains exactly 14 files. The shared `hda_http.py` module is
+required by the hardened runtime command modules and therefore ships as part of
+the public product.
 
 The Python files are the active runnable command surface. They require Python
-3.9 or newer, use only the standard library in v0.1.0, require no pip
+3.9 or newer, use only the standard library in this candidate, require no pip
 installation, and require network access for live interfaces. The registry
 provides source and interface availability metadata. The Skill source is
 `skill/humanitarian-data-access/SKILL.md`; expose it through the recipient
 agent environment's normal skill-discovery procedure described in `README.md`.
+
+The public runtime accepts only HTTP(S) remote URLs, bounds remote bodies,
+downloads, local inputs, archives, decompressed GeoJSON members, result counts,
+and CSV field sizes, and exposes deliberate size-limit overrides where
+appropriate. User-selected durable outputs are no-clobber by default; `--force`
+is the explicit replacement option, including the HDX output/sidecar pair.
 
 Do not add Git metadata, development history, tests, prior query outputs,
 acquired evidence, generated artifacts, caches, temporary state, credentials,

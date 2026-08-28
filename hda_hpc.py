@@ -15,10 +15,13 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Sequence
 
+from hda_http import read_limited, require_http_url
+
 
 SOURCE = "OCHA HPC"
 BASE_URL = "https://api.hpc.tools/v2/public"
 SWAGGER_URL = "https://api.hpc.tools/api-docs"
+API_RESPONSE_LIMIT = 16 * 1024 * 1024
 DEFAULT_MAX_RECORDS = 10
 DEFAULT_STDOUT_RECORDS = 5
 MAX_RECORDS = 10_000
@@ -32,11 +35,11 @@ def _timestamp() -> str:
 
 def _request_json(url: str, timeout: float) -> Any:
     request = urllib.request.Request(
-        url,
+        require_http_url(url),
         headers={"Accept": "application/json", "User-Agent": USER_AGENT},
     )
     with urllib.request.urlopen(request, timeout=timeout) as response:
-        body = response.read()
+        body = read_limited(response, API_RESPONSE_LIMIT, "HPC API response", response.headers)
         try:
             return json.loads(body)
         except json.JSONDecodeError as exc:
@@ -180,29 +183,26 @@ def _native_ids(records: list[Any]) -> list[Any]:
 
 def _explicit_relationships(records: list[Any]) -> tuple[list[dict[str, Any]], bool]:
     found: list[dict[str, Any]] = []
-
-    def walk(value: Any, path: str) -> None:
-        if len(found) >= MAX_RELATIONSHIPS:
-            return
+    stack: list[tuple[Any, str, str | None]] = [
+        (record, f"records[{index}]", None) for index, record in reversed(list(enumerate(records)))
+    ]
+    while stack and len(found) < MAX_RELATIONSHIPS:
+        value, path, field = stack.pop()
+        if field is not None and (field.endswith("Id") or field.endswith("Ids")) and value is not None:
+            found.append({"path": path, "field": field, "value": value})
+            if len(found) >= MAX_RELATIONSHIPS:
+                break
         if isinstance(value, dict):
-            for key, child in value.items():
-                child_path = f"{path}.{key}"
-                if (key.endswith("Id") or key.endswith("Ids")) and child is not None:
-                    found.append({"path": child_path, "field": key, "value": child})
-                    if len(found) >= MAX_RELATIONSHIPS:
-                        return
-                walk(child, child_path)
+            stack.extend((child, f"{path}.{key}", key) for key, child in reversed(list(value.items())))
         elif isinstance(value, list):
-            for index, child in enumerate(value):
-                walk(child, f"{path}[{index}]")
-
-    for index, record in enumerate(records):
-        walk(record, f"records[{index}]")
+            stack.extend((child, f"{path}[{index}]", None) for index, child in reversed(list(enumerate(value))))
     return found, len(found) >= MAX_RELATIONSHIPS
 
 
-def _write_json(path: pathlib.Path, payload: Any) -> str:
+def _write_json(path: pathlib.Path, payload: Any, force: bool = False) -> str:
     path = path.resolve()
+    if path.exists() and not force:
+        raise FileExistsError(f"output already exists: {path}; use --force to replace it")
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
     try:
@@ -229,7 +229,10 @@ def query(
     stdout_records: int,
     output: pathlib.Path | None,
     timeout: float,
+    force: bool = False,
 ) -> dict[str, Any]:
+    if output is not None and output.exists() and not force:
+        raise FileExistsError(f"output already exists: {output}; use --force to replace it")
     spec = _swagger(timeout)
     operations = _public_operations(spec)
     url, literal_params = _build_request(endpoint, raw_params, operations)
@@ -241,7 +244,7 @@ def query(
     has_more = offset + len(selected) < source_count
 
     relationships, relationships_truncated = _explicit_relationships(selected)
-    artifact_path = _write_json(output, payload) if output is not None else None
+    artifact_path = _write_json(output, payload, force) if output is not None else None
 
     lineage = {
         "source": SOURCE,
@@ -309,6 +312,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     query_parser.add_argument("--max-records", type=_positive, default=DEFAULT_MAX_RECORDS)
     query_parser.add_argument("--stdout-records", type=_positive, default=DEFAULT_STDOUT_RECORDS)
     query_parser.add_argument("--output", type=pathlib.Path)
+    query_parser.add_argument("--force", action="store_true", help="deliberately replace an existing output artifact")
     parser.add_argument("--timeout", type=float, default=30.0)
     args = parser.parse_args(argv)
     try:
@@ -321,7 +325,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise ValueError(f"max records cannot exceed {MAX_RECORDS}")
             result = query(
                 args.endpoint.strip("/"), _parse_params(args.param), args.offset,
-                args.max_records, args.stdout_records, args.output, args.timeout,
+                args.max_records, args.stdout_records, args.output, args.timeout, args.force,
             )
         json.dump(result, sys.stdout, ensure_ascii=False, sort_keys=True, indent=2)
         print()

@@ -15,6 +15,8 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Sequence
 
+from hda_http import read_limited, require_http_url
+
 
 SOURCE_ID = "gdacs"
 INTERFACE_ID = "gdacs_rest"
@@ -23,6 +25,7 @@ SWAGGER_URL = f"{BASE_URL}/swagger/v1/swagger.json"
 DOCS_URL = f"{BASE_URL}/swagger/index.html"
 DEFAULT_STDOUT_RECORDS = 5
 USER_AGENT = "hda-gdacs/1.0"
+API_RESPONSE_LIMIT = 16 * 1024 * 1024
 
 
 def _timestamp() -> str:
@@ -30,9 +33,9 @@ def _timestamp() -> str:
 
 
 def _request_json(url: str, timeout: float) -> tuple[Any, dict[str, Any]]:
-    request = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": USER_AGENT})
+    request = urllib.request.Request(require_http_url(url), headers={"Accept": "application/json", "User-Agent": USER_AGENT})
     with urllib.request.urlopen(request, timeout=timeout) as response:
-        body = response.read()
+        body = read_limited(response, API_RESPONSE_LIMIT, "GDACS API response", response.headers)
         facts = {"http_status": response.status, "content_type": response.headers.get("Content-Type"), "response_bytes": len(body)}
     try:
         return json.loads(body), facts
@@ -98,7 +101,8 @@ def _records(payload: Any) -> tuple[list[Any], str]:
     return [payload], "single_object"
 
 
-def _write_json(path: pathlib.Path, payload: Any) -> str:
+def _write_json(path: pathlib.Path, payload: Any, force: bool = False) -> str:
+    if path.exists() and not force: raise FileExistsError(f"output already exists: {path}; use --force to replace it")
     path = path.resolve(); path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
     try:
@@ -111,7 +115,8 @@ def _write_json(path: pathlib.Path, payload: Any) -> str:
 
 
 def query(endpoint: str, raw_params: dict[str, str], max_records: int, stdout_records: int,
-          output: pathlib.Path | None, timeout: float) -> dict[str, Any]:
+          output: pathlib.Path | None, timeout: float, force: bool = False) -> dict[str, Any]:
+    if output is not None and output.exists() and not force: raise FileExistsError(f"output already exists: {output}; use --force to replace it")
     operations = _operations(_swagger(timeout))
     if endpoint not in operations: raise ValueError(f"unknown endpoint {endpoint!r}; run 'hda_gdacs.py list'")
     definitions = {item.get("name"): item for item in operations[endpoint]["operation"].get("parameters") or [] if item.get("name")}
@@ -126,7 +131,7 @@ def query(endpoint: str, raw_params: dict[str, str], max_records: int, stdout_re
     payload, facts = _request_json(source_url, timeout)
     all_records, envelope = _records(payload)
     selected = all_records[:max_records]
-    artifact_path = _write_json(output, payload) if output else None
+    artifact_path = _write_json(output, payload, force) if output else None
     page_size = next((int(v) for k, v in params.items() if k.lower() == "pagesize"), None)
     page_number = next((int(v) for k, v in params.items() if k.lower() == "pagenumber"), None)
     return {
@@ -150,11 +155,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     subparsers.add_parser("list", help="discover GET endpoints and parameters from live Swagger")
     query_parser = subparsers.add_parser("query", help="query any discovered GET endpoint")
     query_parser.add_argument("endpoint"); query_parser.add_argument("--param", action="append", default=[], metavar="NAME=VALUE")
-    query_parser.add_argument("--max-records", type=_positive, default=100); query_parser.add_argument("--stdout-records", type=_positive, default=DEFAULT_STDOUT_RECORDS); query_parser.add_argument("--output", type=pathlib.Path)
+    query_parser.add_argument("--max-records", type=_positive, default=100); query_parser.add_argument("--stdout-records", type=_positive, default=DEFAULT_STDOUT_RECORDS); query_parser.add_argument("--output", type=pathlib.Path); query_parser.add_argument("--force", action="store_true", help="deliberately replace an existing output artifact")
     parser.add_argument("--timeout", type=float, default=30.0); args = parser.parse_args(argv)
     try:
         if args.timeout <= 0: raise ValueError("timeout must be positive")
-        result = discover(args.timeout) if args.command == "list" else query(args.endpoint.strip("/"), _parse_params(args.param), args.max_records, args.stdout_records, args.output, args.timeout)
+        result = discover(args.timeout) if args.command == "list" else query(args.endpoint.strip("/"), _parse_params(args.param), args.max_records, args.stdout_records, args.output, args.timeout, args.force)
         json.dump(result, sys.stdout, ensure_ascii=False, sort_keys=True, indent=2); print(); return 0
     except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError, urllib.error.URLError) as exc:
         parser.exit(1, f"HDA GDACS operation failed: {exc}\n")

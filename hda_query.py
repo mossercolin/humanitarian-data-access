@@ -6,9 +6,12 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import io
 import json
+import os
 import pathlib
 import sys
+import tempfile
 from collections import defaultdict
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -17,6 +20,29 @@ from typing import Any
 OPS = {"eq", "ne", "lt", "lte", "gt", "gte", "contains"}
 AGGREGATES = {"count", "sum", "min", "max", "avg"}
 MAX_RETRIEVAL_LIMIT = 100_000
+DEFAULT_LOCAL_INPUT_LIMIT = 64 * 1024 * 1024
+DEFAULT_CSV_FIELD_SIZE_LIMIT = 1024 * 1024
+
+
+class _BoundedBinaryReader(io.RawIOBase):
+    def __init__(self, stream: Any, byte_limit: int) -> None:
+        self._stream = stream
+        self._remaining = byte_limit
+        self._byte_limit = byte_limit
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, buffer: Any) -> int:
+        if self._remaining == 0:
+            if self._stream.read(1):
+                raise ValueError(f"local CSV input exceeds the {self._byte_limit}-byte limit")
+            return 0
+        chunk = self._stream.read(min(len(buffer), self._remaining))
+        size = len(chunk)
+        buffer[:size] = chunk
+        self._remaining -= size
+        return size
 
 
 def _number(value: str) -> Decimal:
@@ -78,8 +104,14 @@ def _aggregate(rows: list[dict[str, str]], spec: dict[str, Any]) -> Any:
     return sum(values, Decimal(0)) / len(values)
 
 
-def _load_csv(path: pathlib.Path, skip_data_rows: int) -> tuple[list[str], list[dict[str, str]]]:
-    with path.open("r", encoding="utf-8-sig", newline="") as stream:
+def _load_csv(path: pathlib.Path, skip_data_rows: int,
+              csv_field_size_limit: int = DEFAULT_CSV_FIELD_SIZE_LIMIT,
+              local_input_byte_limit: int = DEFAULT_LOCAL_INPUT_LIMIT) -> tuple[list[str], list[dict[str, str]]]:
+    with path.open("rb") as binary_stream, io.TextIOWrapper(
+            io.BufferedReader(_BoundedBinaryReader(binary_stream, local_input_byte_limit)),
+            encoding="utf-8-sig", newline="",
+        ) as stream:
+        csv.field_size_limit(csv_field_size_limit)
         reader = csv.reader(stream)
         raw_headers = next(reader, None)
         if raw_headers is None:
@@ -97,7 +129,9 @@ def _load_csv(path: pathlib.Path, skip_data_rows: int) -> tuple[list[str], list[
     return headers, rows
 
 
-def run_query(csv_path: pathlib.Path, query: dict[str, Any]) -> tuple[list[str], list[dict[str, Any]]]:
+def run_query(csv_path: pathlib.Path, query: dict[str, Any],
+              csv_field_size_limit: int = DEFAULT_CSV_FIELD_SIZE_LIMIT,
+              local_input_byte_limit: int = DEFAULT_LOCAL_INPUT_LIMIT) -> tuple[list[str], list[dict[str, Any]]]:
     allowed = {"select", "filters", "group_by", "aggregates", "sort", "limit", "skip_data_rows"}
     extra = sorted(set(query) - allowed)
     if extra:
@@ -108,7 +142,7 @@ def run_query(csv_path: pathlib.Path, query: dict[str, Any]) -> tuple[list[str],
     skip_data_rows = query.get("skip_data_rows", 0)
     if not isinstance(skip_data_rows, int) or isinstance(skip_data_rows, bool) or skip_data_rows < 0:
         raise ValueError("skip_data_rows must be a non-negative integer")
-    headers, rows = _load_csv(csv_path, skip_data_rows)
+    headers, rows = _load_csv(csv_path, skip_data_rows, csv_field_size_limit, local_input_byte_limit)
     filters = query.get("filters", [])
     _validate_fields([item["field"] for item in filters], headers, "filter")
     rows = [row for row in rows if all(_matches(row, item) for item in filters)]
@@ -151,23 +185,57 @@ def main() -> int:
     parser.add_argument("--query", required=True, help="JSON query object")
     parser.add_argument("--stdout-rows", type=int, default=10)
     parser.add_argument("--output-dir", type=pathlib.Path)
+    parser.add_argument("--force", action="store_true", help="deliberately replace an existing derived query artifact")
+    parser.add_argument(
+        "--local-input-byte-limit", type=int, default=DEFAULT_LOCAL_INPUT_LIMIT,
+        help=f"maximum local CSV input bytes (default: {DEFAULT_LOCAL_INPUT_LIMIT}); increase deliberately for an expected large file",
+    )
+    parser.add_argument(
+        "--csv-field-size-limit", type=int, default=DEFAULT_CSV_FIELD_SIZE_LIMIT,
+        help=f"maximum parsed CSV field characters (default: {DEFAULT_CSV_FIELD_SIZE_LIMIT}); increase deliberately for expected wide fields",
+    )
     args = parser.parse_args()
     try:
         if args.stdout_rows < 1:
             raise ValueError("stdout-rows must be positive")
+        if args.local_input_byte_limit < 1 or args.csv_field_size_limit < 1:
+            raise ValueError("local input and CSV field size limits must be positive")
         query = json.loads(args.query)
         if not isinstance(query, dict):
             raise ValueError("query must be a JSON object")
         csv_path = args.csv.resolve(strict=True)
+        input_size = csv_path.stat().st_size
+        if input_size > args.local_input_byte_limit:
+            raise ValueError(
+                f"local CSV input size {input_size} exceeds the {args.local_input_byte_limit}-byte limit; "
+                "use --local-input-byte-limit with an expected larger size"
+            )
         sidecar_path = csv_path.with_name(csv_path.name + ".acquisition.json")
         lineage = json.loads(sidecar_path.read_text(encoding="utf-8"))
-        fields, rows = run_query(csv_path, query)
+        fields, rows = run_query(
+            csv_path, query, args.csv_field_size_limit, args.local_input_byte_limit,
+        )
         artifact_path = None
         if len(rows) > args.stdout_rows and args.output_dir is not None:
             digest = hashlib.sha256((str(csv_path) + "\n" + json.dumps(query, sort_keys=True)).encode()).hexdigest()[:16]
             args.output_dir.mkdir(parents=True, exist_ok=True)
             target = (args.output_dir / f"query-{digest}.json").resolve()
-            target.write_text(json.dumps({"lineage": lineage, "fields": fields, "rows": rows}, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+            if target.exists() and not args.force:
+                raise FileExistsError(f"output already exists: {target}; use --force to replace it")
+            fd, temporary = tempfile.mkstemp(prefix=target.name + ".", dir=target.parent)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                    json.dump({"lineage": lineage, "fields": fields, "rows": rows}, stream, ensure_ascii=False, sort_keys=True, indent=2)
+                    stream.write("\n")
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(temporary, target)
+            except BaseException:
+                try:
+                    os.unlink(temporary)
+                except FileNotFoundError:
+                    pass
+                raise
             artifact_path = str(target)
         response = {
             "schema_version": "hda-query/v1",
@@ -185,7 +253,7 @@ def main() -> int:
         json.dump(response, sys.stdout, ensure_ascii=False, sort_keys=True, indent=2)
         print()
         return 0
-    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError, KeyError, TypeError, csv.Error, json.JSONDecodeError) as exc:
         parser.exit(1, f"HDA query failed: {exc}\n")
 
 

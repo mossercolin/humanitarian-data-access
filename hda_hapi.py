@@ -15,6 +15,8 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Sequence
 
+from hda_http import read_limited, require_http_url
+
 
 OPENAPI_URL = "https://hapi.humdata.org/openapi.json"
 BASE_URL = "https://hapi.humdata.org/api/v2"
@@ -26,6 +28,7 @@ MAX_LINEAGE_RESOURCES = 20
 # Some intermediary paths reject Python's default user agent even though the
 # documented curl-style access works.
 USER_AGENT = "curl/8.7.1"
+API_RESPONSE_LIMIT = 16 * 1024 * 1024
 
 
 def _timestamp() -> str:
@@ -33,9 +36,9 @@ def _timestamp() -> str:
 
 
 def _request_json(url: str, timeout: float) -> dict[str, Any]:
-    request = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": USER_AGENT})
+    request = urllib.request.Request(require_http_url(url), headers={"Accept": "application/json", "User-Agent": USER_AGENT})
     with urllib.request.urlopen(request, timeout=timeout) as response:
-        body = response.read()
+        body = read_limited(response, API_RESPONSE_LIMIT, "HDX HAPI API response", response.headers)
         try:
             payload = json.loads(body)
         except json.JSONDecodeError as exc:
@@ -149,8 +152,10 @@ def _parse_params(values: Sequence[str]) -> dict[str, str]:
     return result
 
 
-def _write_json(path: pathlib.Path, payload: dict[str, Any]) -> str:
+def _write_json(path: pathlib.Path, payload: dict[str, Any], force: bool = False) -> str:
     path = path.resolve()
+    if path.exists() and not force:
+        raise FileExistsError(f"output already exists: {path}; use --force to replace it")
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
     try:
@@ -177,7 +182,10 @@ def query(
     stdout_records: int,
     output: pathlib.Path | None,
     timeout: float,
+    force: bool = False,
 ) -> dict[str, Any]:
+    if output is not None and output.exists() and not force:
+        raise FileExistsError(f"output already exists: {output}; use --force to replace it")
     spec = _openapi(timeout)
     operations = _operations(spec)
     if endpoint not in operations:
@@ -263,7 +271,7 @@ def query(
         },
         "records": records,
     }
-    artifact_path = _write_json(output, complete) if output else None
+    artifact_path = _write_json(output, complete, force) if output else None
     stdout_truncated = len(records) > stdout_records
     return {
         **{key: complete[key] for key in ("schema_version", "request_scope", "lineage", "pagination")},
@@ -294,6 +302,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     query_parser.add_argument("--max-records", type=_positive, default=1000)
     query_parser.add_argument("--stdout-records", type=_positive, default=DEFAULT_STDOUT_RECORDS)
     query_parser.add_argument("--output", type=pathlib.Path)
+    query_parser.add_argument("--force", action="store_true", help="deliberately replace an existing output artifact")
     parser.add_argument("--timeout", type=float, default=30.0)
     args = parser.parse_args(argv)
     try:
@@ -306,7 +315,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise ValueError(f"page size cannot exceed {MAX_PAGE_SIZE}")
             if args.max_records > MAX_RECORDS:
                 raise ValueError(f"max records cannot exceed {MAX_RECORDS}")
-            result = query(args.endpoint.strip("/"), _parse_params(args.param), args.page_size, args.max_records, args.stdout_records, args.output, args.timeout)
+            result = query(args.endpoint.strip("/"), _parse_params(args.param), args.page_size, args.max_records, args.stdout_records, args.output, args.timeout, args.force)
         json.dump(result, sys.stdout, ensure_ascii=False, sort_keys=True, indent=2)
         print()
         return 0
