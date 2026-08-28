@@ -17,7 +17,7 @@ import zipfile
 from datetime import datetime, timezone
 from typing import Any, Sequence
 
-from hda_http import read_limited, require_http_url
+from hda_http import open_http, read_limited, remote_json_loads, require_http_url
 
 
 CKAN_ACTION = "https://data.humdata.org/api/3/action"
@@ -35,8 +35,8 @@ def _timestamp() -> str:
 def _request_json(action: str, parameters: dict[str, Any], timeout: float) -> dict[str, Any]:
     url = f"{CKAN_ACTION}/{action}?{urllib.parse.urlencode(parameters)}"
     request = urllib.request.Request(require_http_url(url), headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        payload = json.loads(read_limited(response, API_RESPONSE_LIMIT, "HDX COD catalog API response", response.headers))
+    with open_http(request, timeout=timeout) as response:
+        payload = remote_json_loads(read_limited(response, API_RESPONSE_LIMIT, "HDX COD catalog API response", response.headers))
     if not payload.get("success") or not isinstance(payload.get("result"), (dict, list)):
         raise ValueError(f"HDX CKAN {action} did not return a successful result")
     return {"url": url, "result": payload["result"]}
@@ -75,7 +75,7 @@ def _resource(dataset: dict[str, Any]) -> dict[str, Any]:
 
 def _archive(url: str, timeout: float, byte_limit: int = DEFAULT_ARCHIVE_LIMIT) -> tuple[bytes, str]:
     request = urllib.request.Request(require_http_url(url), headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with open_http(request, timeout=timeout) as response:
         data = read_limited(response, byte_limit, "COD-AB remote archive", response.headers)
     return data, hashlib.sha256(data).hexdigest()
 
@@ -109,7 +109,7 @@ def _feature_collection(data: bytes, admin_level: int,
             )
         with archive.open(member) as stream:
             document = _read_member_limited(stream, member_byte_limit)
-        payload = json.loads(document)
+        payload = remote_json_loads(document)
     if payload.get("type") != "FeatureCollection" or not isinstance(payload.get("features"), list):
         raise ValueError("COD-AB member is not a GeoJSON FeatureCollection")
     if not payload["features"]:

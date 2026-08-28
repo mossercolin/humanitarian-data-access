@@ -16,7 +16,7 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Sequence
 
-from hda_http import read_limited, require_http_url
+from hda_http import open_http, read_limited, remote_json_loads, require_http_url
 
 
 SOURCE_ID = "unhcr_refugee_statistics"
@@ -42,16 +42,17 @@ def _timestamp() -> str:
 
 def _request_json(url: str, timeout: float) -> tuple[Any, dict[str, Any]]:
     request = urllib.request.Request(require_http_url(url), headers={"Accept": "application/json", "User-Agent": USER_AGENT})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with open_http(request, timeout=timeout) as response:
         body = read_limited(response, API_RESPONSE_LIMIT, "UNHCR API response", response.headers)
         facts = {
             "http_status": response.status,
             "content_type": response.headers.get("Content-Type"),
             "response_bytes": len(body),
+            "final_response_url": response.geturl(),
         }
     try:
-        return json.loads(body), facts
-    except json.JSONDecodeError as exc:
+        return remote_json_loads(body), facts
+    except ValueError as exc:
         raise ValueError(f"server returned invalid JSON ({facts})") from exc
 
 

@@ -26,7 +26,7 @@ field and global humanitarian experience.
 
 ## Requirements
 
-- Python 3.9 or newer; this candidate uses only the Python standard library.
+- Python 3.9 or newer; HDA uses only the Python standard library.
 - Network access to the selected public source for discovery or live queries.
 - No pip installation is required.
 - A skill-capable agent environment is optional and required only for
@@ -84,6 +84,12 @@ archives to 256 MiB; and the selected decompressed GeoJSON member to 512 MiB.
 CSV fields have a finite default parser limit of 1 MiB. The relevant CLI limit
 option may be increased deliberately for an expected larger input; record and
 pagination ceilings remain enforced by each source command.
+
+For commands that expose `--timeout`, the value controls socket connection and
+read inactivity. It is not a strict total end-to-end deadline for an operation
+that may perform multiple requests or continue receiving data.
+
+See `CHANGELOG.md` for release history.
 
 ## Expose the agent Skill
 

@@ -4,6 +4,7 @@ Build an HDA product directory from empty by copying only this allowlist:
 
 - `LICENSE`
 - `README.md`
+- `CHANGELOG.md`
 - `DISTRIBUTION.md`
 - `source_registry.json`
 - `hdx_discover.py`
@@ -21,12 +22,12 @@ Build an HDA product directory from empty by copying only this allowlist:
 - `hda_who_don.py`
 - `skill/humanitarian-data-access/SKILL.md`
 
-This allowlist contains exactly 18 files. The shared `hda_http.py` module is
+This allowlist contains exactly 19 files. The shared `hda_http.py` module is
 required by the hardened runtime command modules and therefore ships as part of
 the public product.
 
 The Python files are the active runnable command surface. They require Python
-3.9 or newer, use only the standard library in this candidate, require no pip
+3.9 or newer, use only the standard library, require no pip
 installation, and require network access for live interfaces. The registry
 provides source and interface availability metadata. The Skill source is
 `skill/humanitarian-data-access/SKILL.md`; expose it through the recipient

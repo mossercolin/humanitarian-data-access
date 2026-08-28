@@ -13,7 +13,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from typing import Any, Sequence
 
-from hda_http import read_limited, require_http_url
+from hda_http import open_http, read_limited, remote_json_loads, require_http_url
 
 
 SOURCE_ID = "who_whdh_xmart"
@@ -28,7 +28,9 @@ METADATA_LIMIT = 1024 * 1024
 DATA_LIMIT = 1024 * 1024
 MAX_TOP = 100
 MAX_STDOUT_RECORDS = 10
+DEFAULT_STDOUT_BYTES_LIMIT = 256 * 1024
 USER_AGENT = "hda-who-xmart/1.0"
+DOCTYPE_MARKERS = tuple("<!DOCTYPE".encode(encoding) for encoding in ("utf-8", "utf-16-le", "utf-16-be", "utf-32-le", "utf-32-be"))
 
 
 def _timestamp() -> str:
@@ -37,14 +39,16 @@ def _timestamp() -> str:
 
 def _request(url: str, accept: str, limit: int, operation: str, timeout: float) -> tuple[bytes, dict[str, Any]]:
     request = urllib.request.Request(require_http_url(url), headers={"Accept": accept, "User-Agent": USER_AGENT})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with open_http(request, timeout=timeout) as response:
         body = read_limited(response, limit, operation, response.headers)
-        return body, {"http_status": response.status, "content_type": response.headers.get("Content-Type"), "response_bytes": len(body), "response_limit_bytes": limit}
+        return body, {"http_status": response.status, "content_type": response.headers.get("Content-Type"), "response_bytes": len(body), "response_limit_bytes": limit, "final_response_url": response.geturl()}
 
 
 def _metadata(timeout: float) -> tuple[ET.Element, dict[str, Any]]:
     body, network = _request(METADATA_URL, "application/xml", METADATA_LIMIT, "WHO xMart metadata response", timeout)
     try:
+        if any(marker in body for marker in DOCTYPE_MARKERS):
+            raise ValueError(f"WHO xMart metadata response contained a prohibited DOCTYPE declaration ({network})")
         return ET.fromstring(body), network
     except ET.ParseError as exc:
         raise ValueError(f"WHO xMart metadata response was invalid XML ({network})") from exc
@@ -89,12 +93,16 @@ def query(select: Sequence[str], filter_expression: str, top: int, skip: int, st
     source_url = OBJECT_URL + "?" + urllib.parse.urlencode(parameters)
     body, data_network = _request(source_url, "application/json", DATA_LIMIT, "WHO xMart data response", timeout)
     try:
-        payload = json.loads(body)
-    except json.JSONDecodeError as exc:
+        payload = remote_json_loads(body)
+    except ValueError as exc:
         raise ValueError(f"WHO xMart data response was invalid JSON ({data_network})") from exc
     if not isinstance(payload, dict) or not isinstance(payload.get("value"), list):
         raise ValueError("WHO xMart response lacks the OData value record array")
     records = payload["value"]
+    if any(not isinstance(record, dict) for record in records):
+        raise ValueError("WHO xMart response value array contains a non-object record")
+    if any(any(name not in record for name in selected) for record in records):
+        raise ValueError("WHO xMart response record lacks a requested $select field")
     if not records:
         raise ValueError("WHO xMart response contained no records for the exact query scope")
     shown = min(len(records), stdout_records)
@@ -120,6 +128,15 @@ def _nonnegative(value: str) -> int:
     return parsed
 
 
+def _stdout_bytes(result: dict[str, Any], limit: int) -> bytes:
+    normal = (json.dumps(result, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False) + "\n").encode("utf-8")
+    if len(normal) <= limit: return normal
+    envelope = {"schema_version": "hda-output-limit-envelope/v1", "source_id": SOURCE_ID, "interface_id": INTERFACE_ID, "request_scope": result.get("request_scope", {"operation": "discover", "resource": f"{MART}/{OBJECT}"}), "provenance": {"lineage": result["lineage"], "network": result["network"]}, "counts": {"response_record_count": result["network"].get("response_record_count")}, "stdout_bytes_limit": limit, "normal_serialized_bytes": len(normal), "output_limit_exceeded": True, "data_omitted": True, "reason": "Publisher records/data were omitted because the serialized model-facing stdout limit was exceeded."}
+    emitted = (json.dumps(envelope, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False) + "\n").encode("utf-8")
+    if len(emitted) > limit: raise ValueError("output-limit envelope exceeds stdout byte limit")
+    return emitted
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -131,14 +148,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     q.add_argument("--skip", type=_nonnegative, default=0)
     q.add_argument("--stdout-records", type=_positive, default=MAX_STDOUT_RECORDS)
     parser.add_argument("--timeout", type=float, default=30.0)
+    parser.add_argument("--stdout-bytes-limit", type=_positive, default=DEFAULT_STDOUT_BYTES_LIMIT, help=f"serialized UTF-8 stdout ceiling including newline; deliberate increase only (default: {DEFAULT_STDOUT_BYTES_LIMIT} bytes)")
     args = parser.parse_args(argv)
     try:
         if args.timeout <= 0: raise ValueError("timeout must be positive")
+        if args.stdout_bytes_limit < DEFAULT_STDOUT_BYTES_LIMIT: raise ValueError(f"--stdout-bytes-limit must be at least the default {DEFAULT_STDOUT_BYTES_LIMIT}")
         if args.command == "discover": result = discover(args.timeout)
         else:
             if args.stdout_records > MAX_STDOUT_RECORDS: raise ValueError(f"--stdout-records cannot exceed {MAX_STDOUT_RECORDS}")
             result = query(args.select.split(","), args.filter_expression, args.top, args.skip, args.stdout_records, args.timeout)
-        json.dump(result, sys.stdout, ensure_ascii=False, sort_keys=True, indent=2); print(); return 0
+        sys.stdout.buffer.write(_stdout_bytes(result, args.stdout_bytes_limit)); return 0
     except (OSError, ValueError, KeyError, TypeError, urllib.error.URLError) as exc:
         parser.exit(1, f"HDA WHO xMart operation failed: {exc}\n")
 
