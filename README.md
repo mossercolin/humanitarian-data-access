@@ -17,6 +17,11 @@ OCHA HPC public, UNHCR Refugee Statistics, and GDACS REST.
 
 HDA is licensed under the Apache License 2.0; see `LICENSE`.
 
+## Development provenance
+
+HDA is 100% vibe-coded and human-guided by a humanitarian practitioner with
+field and global humanitarian experience.
+
 ## Requirements
 
 - Python 3.9 or newer; this candidate uses only the Python standard library.
