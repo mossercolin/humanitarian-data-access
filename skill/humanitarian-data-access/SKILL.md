@@ -14,3 +14,16 @@ Preserve population universes, geographic meaning, temporal meaning, source qual
 Use HDA geographic access when real location identity, coordinates, or administrative boundaries are required. Geographic output is data with provenance, not visual rendering; ArcGIS, QGIS, or another deterministic consumer may render it downstream. Preserve the source CRS declaration and never silently assume geographic or CRS equivalence.
 
 Semantic caution is normal reasoning behavior, not another tool. Do not invoke or search for a Humanitarian Evidence Compiler.
+
+Available health-oriented L2 routes include bounded UNICEF public SDMX (proved
+for `UNICEF:IMMUNISATION(1.0)`), WHO public xMart OData (proved for
+`FLUMART/VIW_FNT`), UNFPA Population Data Portal public ArcGIS REST (maternal
+mortality ratio as representative proof), and structured WHO Disease Outbreak
+News publications. These representative proofs do not establish every UNICEF
+dataset or UNFPA indicator, and the xMart runtime is not a universal WHO health
+or outbreak client. WHO DON is selective and non-exhaustive; preserve its
+authored epidemiological narrative and do not turn prose into a normalized
+case/death database. HDA-native structured sources may be insufficient for some
+current epidemiological questions, so authoritative document or external
+fallback may still be required. Do not claim comprehensive epidemiological
+surveillance.

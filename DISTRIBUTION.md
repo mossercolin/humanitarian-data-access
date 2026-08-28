@@ -15,9 +15,13 @@ Build an HDA product directory from empty by copying only this allowlist:
 - `hda_gdacs.py`
 - `hda_geo.py`
 - `hda_http.py`
+- `hda_unicef_sdmx.py`
+- `hda_who_xmart.py`
+- `hda_unfpa_arcgis.py`
+- `hda_who_don.py`
 - `skill/humanitarian-data-access/SKILL.md`
 
-This allowlist contains exactly 14 files. The shared `hda_http.py` module is
+This allowlist contains exactly 18 files. The shared `hda_http.py` module is
 required by the hardened runtime command modules and therefore ships as part of
 the public product.
 

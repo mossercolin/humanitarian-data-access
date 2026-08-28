@@ -13,7 +13,9 @@ In the registry, L1 means catalogued and validated interface knowledge. L2,
 recorded as `access_ready`, means that the interface has been operationally
 proven. Agents should route only through registry-confirmed access-ready
 capabilities. The current set is HDX CKAN, OCHA COD-AB through HDX, HDX HAPI,
-OCHA HPC public, UNHCR Refugee Statistics, and GDACS REST.
+OCHA HPC public, UNHCR Refugee Statistics, GDACS REST, UNICEF public SDMX,
+WHO public WHDH/xMart OData, UNFPA Population Data Portal public ArcGIS REST,
+and WHO Disease Outbreak News public OData.
 
 HDA is licensed under the Apache License 2.0; see `LICENSE`.
 
@@ -44,10 +46,28 @@ root; no fixed installation path is required.
 - `hda_gdacs.py` — query GDACS.
 - `hda_geo.py` — resolve COD country identity and obtain real administrative
   boundary GeoJSON with source lineage.
+- `hda_unicef_sdmx.py` — bounded native public SDMX access, proved for the
+  representative flow `UNICEF:IMMUNISATION(1.0)`; not all UNICEF datasets have
+  been tested.
+- `hda_who_xmart.py` — bounded WHO public xMart OData access for the proved
+  representative route `FLUMART/VIW_FNT`; this is not a universal WHO health
+  or outbreak client.
+- `hda_unfpa_arcgis.py` — bounded UNFPA Population Data Portal public ArcGIS
+  REST access, with maternal mortality ratio as the representative proof; not
+  all UNFPA indicators have been tested.
+- `hda_who_don.py` — bounded structured collection of WHO Disease Outbreak News
+  publications. DON is selective and non-exhaustive, and its epidemiological
+  narrative remains authored content; HDA does not convert that prose into a
+  normalized case/death database.
 
 `source_registry.json` records source availability, interface status, access
 classes, and known constraints. It is the authoritative source-availability
 surface.
+
+HDA-native structured sources may not fully establish some current
+epidemiological questions. Authoritative document or external fallback may
+still be required; HDA makes no claim of comprehensive epidemiological
+surveillance.
 
 Routine queries return bounded JSON to stdout and do not silently save query
 results. Durable output remains available through explicit `--output` options,
