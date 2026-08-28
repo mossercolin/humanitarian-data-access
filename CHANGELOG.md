@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.2.1 — Unreleased
+## v0.2.1 — 2026-08-28
 
 ### Hardening and corrections
 
