@@ -10,6 +10,7 @@ import io
 import json
 import os
 import pathlib
+import sys
 import tempfile
 import urllib.request
 from datetime import datetime, timezone
@@ -28,6 +29,7 @@ CATALOG_NAME = "Humanitarian Data Exchange (HDX)"
 CATALOG_API = "https://data.humdata.org/api/3/action/package_search"
 DEFAULT_INSPECTION_LIMIT = 1_000_000
 DEFAULT_SAMPLE_ROWS = 3
+DEFAULT_STDOUT_BYTES_LIMIT = 256 * 1024
 DEFAULT_ACQUISITION_LIMIT = 64 * 1024 * 1024
 DEFAULT_LOCAL_INSPECTION_LIMIT = 64 * 1024 * 1024
 DEFAULT_CSV_FIELD_SIZE_LIMIT = 1024 * 1024
@@ -149,7 +151,9 @@ def acquire(url: str, dataset_id: str, resource_id: str, destination: pathlib.Pa
     request = urllib.request.Request(url, headers={"User-Agent": "humanitarian-data-access/acquire"})
     fd, temporary_name = tempfile.mkstemp(prefix=destination.name + ".", dir=destination.parent)
     metadata_temporary_name: str | None = None
-    published_new_destination = False
+    backups: dict[pathlib.Path, str] = {}
+    backup_names: list[str] = []
+    published: list[pathlib.Path] = []
     try:
         with os.fdopen(fd, "wb") as output, open_http(request, timeout=timeout) as response:
             content_length = response.headers.get("Content-Length")
@@ -198,24 +202,38 @@ def acquire(url: str, dataset_id: str, resource_id: str, destination: pathlib.Pa
             stream.write("\n")
             stream.flush()
             os.fsync(stream.fileno())
+        # Both candidates are complete before moving either existing member.
+        if force:
+            for path in (destination, metadata_path):
+                if path.exists():
+                    backup_fd, backup_name = tempfile.mkstemp(
+                        prefix=path.name + ".backup.", dir=destination.parent
+                    )
+                    backup_names.append(backup_name)
+                    os.close(backup_fd)
+                    os.replace(path, backup_name)
+                    backups[path] = backup_name
         os.replace(temporary_name, destination)
+        published.append(destination)
         temporary_name = ""
-        published_new_destination = not existing
         os.replace(metadata_temporary_name, metadata_path)
+        published.append(metadata_path)
         metadata_temporary_name = None
     except BaseException:
-        if published_new_destination:
-            try:
-                destination.unlink()
-            except FileNotFoundError:
-                pass
-        for temporary in (temporary_name, metadata_temporary_name):
+        for path in (metadata_path, destination):
+            if path in backups:
+                os.replace(backups[path], path)
+            elif path in published:
+                path.unlink()
+        for temporary in (temporary_name, metadata_temporary_name, *backup_names):
             if temporary:
                 try:
                     os.unlink(temporary)
                 except FileNotFoundError:
                     pass
         raise
+    for backup_name in backup_names:
+        os.unlink(backup_name)
     return {"mode": "durable_acquisition", "durable": True, "metadata_path": str(metadata_path.resolve()), **metadata}
 
 
@@ -246,6 +264,10 @@ def main() -> int:
         help=f"maximum local input bytes (default: {DEFAULT_LOCAL_INSPECTION_LIMIT}); increase deliberately for an expected large file",
     )
     for item in (disposable, local):
+        item.add_argument(
+            "--stdout-bytes-limit", type=int, default=DEFAULT_STDOUT_BYTES_LIMIT,
+            help=f"maximum serialized inspection stdout bytes (minimum/default: {DEFAULT_STDOUT_BYTES_LIMIT}); increase deliberately for larger output",
+        )
         item.add_argument("--sample-rows", type=int, default=DEFAULT_SAMPLE_ROWS)
         item.add_argument(
             "--csv-field-size-limit", type=int, default=DEFAULT_CSV_FIELD_SIZE_LIMIT,
@@ -257,6 +279,8 @@ def main() -> int:
             or getattr(args, "local_byte_limit", 1) < 1
             or getattr(args, "csv_field_size_limit", 1) < 1 or args.timeout <= 0):
         parser.error("limits, sample rows, and timeout must be positive")
+    if getattr(args, "stdout_bytes_limit", DEFAULT_STDOUT_BYTES_LIMIT) < DEFAULT_STDOUT_BYTES_LIMIT:
+        parser.error(f"--stdout-bytes-limit must be at least {DEFAULT_STDOUT_BYTES_LIMIT}")
     try:
         if args.command == "inspect-url":
             result = disposable_inspect(
@@ -282,6 +306,27 @@ def main() -> int:
             result = {"mode": "mechanical_inspection", "durable": True, "local_path": str(args.path.resolve()), "size_bytes": size, **inspection}
     except Exception as exc:
         parser.exit(1, f"HDX operation failed: {exc}\n")
+    if args.command != "acquire":
+        payload = (json.dumps(result, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")
+        if len(payload) > args.stdout_bytes_limit:
+            envelope = {key: value for key, value in result.items()
+                        if key not in ("headers_exactly_as_found", "sample")}
+            if "sample" in result:
+                envelope["sample"] = {key: value for key, value in result["sample"].items()
+                                      if key in ("identified_as", "method", "size_rows")}
+            envelope.update({
+                "schema_version": "hda-output-limit-envelope/v1",
+                "stdout_bytes_limit": args.stdout_bytes_limit,
+                "normal_serialized_bytes": len(payload),
+                "output_limit_exceeded": True,
+                "data_omitted": True,
+                "reason": "Serialized inspection exceeds stdout byte limit; headers and sample rows omitted. Increase --stdout-bytes-limit deliberately for full output.",
+            })
+            payload = (json.dumps(envelope, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")
+            if len(payload) > args.stdout_bytes_limit:
+                parser.exit(1, "HDX operation failed: inspection output-limit envelope exceeds --stdout-bytes-limit\n")
+        sys.stdout.buffer.write(payload)
+        return 0
     json.dump(result, __import__("sys").stdout, ensure_ascii=False, sort_keys=True, indent=2)
     print()
     return 0

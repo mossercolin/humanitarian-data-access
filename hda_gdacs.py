@@ -24,6 +24,7 @@ BASE_URL = "https://www.gdacs.org/gdacsapi"
 SWAGGER_URL = f"{BASE_URL}/swagger/v1/swagger.json"
 DOCS_URL = f"{BASE_URL}/swagger/index.html"
 DEFAULT_STDOUT_RECORDS = 5
+DEFAULT_STDOUT_BYTES_LIMIT = 256 * 1024
 USER_AGENT = "hda-gdacs/1.0"
 API_RESPONSE_LIMIT = 16 * 1024 * 1024
 
@@ -144,6 +145,34 @@ def query(endpoint: str, raw_params: dict[str, str], max_records: int, stdout_re
     }
 
 
+def _stdout_bytes(result: dict[str, Any], command: str, limit: int) -> bytes:
+    def serialize(value: dict[str, Any]) -> bytes:
+        return (json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")
+
+    normal = serialize(result)
+    if len(normal) <= limit:
+        return normal
+    envelope = {
+        "schema_version": "hda-output-limit-envelope/v1",
+        "source_id": SOURCE_ID, "interface_id": INTERFACE_ID,
+        "stdout_bytes_limit": limit, "normal_serialized_bytes": len(normal),
+        "output_limit_exceeded": True, "data_omitted": True,
+        "reason": "Endpoints or result records were omitted because the serialized model-facing stdout limit was exceeded.",
+    }
+    if command == "query":
+        for key in ("operation", "request_scope", "lineage", "network"):
+            envelope[key] = result[key]
+        envelope["result"] = {key: value for key, value in result["result"].items() if key != "records"}
+    else:
+        envelope["operation"] = "list"
+        for key in ("base_endpoint", "official_docs", "swagger_url", "authentication", "endpoint_count"):
+            envelope[key] = result[key]
+    emitted = serialize(envelope)
+    if len(emitted) > limit:
+        raise ValueError("output-limit envelope exceeds stdout byte limit")
+    return emitted
+
+
 def _positive(value: str) -> int:
     result = int(value)
     if result < 1: raise argparse.ArgumentTypeError("must be at least 1")
@@ -156,11 +185,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     query_parser = subparsers.add_parser("query", help="query any discovered GET endpoint")
     query_parser.add_argument("endpoint"); query_parser.add_argument("--param", action="append", default=[], metavar="NAME=VALUE")
     query_parser.add_argument("--max-records", type=_positive, default=100); query_parser.add_argument("--stdout-records", type=_positive, default=DEFAULT_STDOUT_RECORDS); query_parser.add_argument("--output", type=pathlib.Path); query_parser.add_argument("--force", action="store_true", help="deliberately replace an existing output artifact")
+    parser.add_argument("--stdout-bytes-limit", type=_positive, default=DEFAULT_STDOUT_BYTES_LIMIT, help=f"serialized stdout byte ceiling (minimum/default: {DEFAULT_STDOUT_BYTES_LIMIT})")
     parser.add_argument("--timeout", type=float, default=30.0); args = parser.parse_args(argv)
     try:
+        if args.stdout_bytes_limit < DEFAULT_STDOUT_BYTES_LIMIT:
+            raise ValueError(f"--stdout-bytes-limit must be at least the default {DEFAULT_STDOUT_BYTES_LIMIT}")
         if args.timeout <= 0: raise ValueError("timeout must be positive")
         result = discover(args.timeout) if args.command == "list" else query(args.endpoint.strip("/"), _parse_params(args.param), args.max_records, args.stdout_records, args.output, args.timeout, args.force)
-        json.dump(result, sys.stdout, ensure_ascii=False, sort_keys=True, indent=2); print(); return 0
+        sys.stdout.buffer.write(_stdout_bytes(result, args.command, args.stdout_bytes_limit)); return 0
     except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError, urllib.error.URLError) as exc:
         parser.exit(1, f"HDA GDACS operation failed: {exc}\n")
 

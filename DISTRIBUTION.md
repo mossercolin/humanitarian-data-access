@@ -1,4 +1,4 @@
-# HDA public product boundary
+# HDA v0.3.0 public product boundary
 
 Build an HDA product directory from empty by copying only this allowlist:
 
@@ -20,9 +20,14 @@ Build an HDA product directory from empty by copying only this allowlist:
 - `hda_who_xmart.py`
 - `hda_unfpa_arcgis.py`
 - `hda_who_don.py`
+- `hda_fews.py`
+- `hda_ifrc_go.py`
+- `hda_cerf.py`
+- `hda_cbpf.py`
+- `hda_inform.py`
 - `skill/humanitarian-data-access/SKILL.md`
 
-This allowlist contains exactly 19 files. The shared `hda_http.py` module is
+This allowlist contains exactly 24 files. The shared `hda_http.py` module is
 required by the hardened runtime command modules and therefore ships as part of
 the public product.
 

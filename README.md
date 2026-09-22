@@ -1,5 +1,7 @@
 # HDA — Humanitarian Data Access
 
+Current release: **v0.3.0**.
+
 HDA is agent-oriented, scoped, traceable access to public/open humanitarian and
 relevant contextual data. It is structured-first, not structured-only: it
 prefers validated structured interfaces while retaining bounded discovery and
@@ -12,10 +14,13 @@ The agent workflow is:
 In the registry, L1 means catalogued and validated interface knowledge. L2,
 recorded as `access_ready`, means that the interface has been operationally
 proven. Agents should route only through registry-confirmed access-ready
-capabilities. The current set is HDX CKAN, OCHA COD-AB through HDX, HDX HAPI,
+capabilities. The current registry marks 15 interfaces as access-ready: HDX CKAN, OCHA COD-AB through HDX, HDX HAPI,
 OCHA HPC public, UNHCR Refugee Statistics, GDACS REST, UNICEF public SDMX,
 WHO public WHDH/xMart OData, UNFPA Population Data Portal public ArcGIS REST,
-and WHO Disease Outbreak News public OData.
+WHO Disease Outbreak News public OData, FEWS NET public market prices,
+IFRC GO public Events, CERF Projects by Year, CBPF PF Project Summary v4,
+and INFORM country/model scores. Access-ready records are dated, scoped proofs,
+not a guarantee of current publisher availability or source-wide coverage.
 
 HDA is licensed under the Apache License 2.0; see `LICENSE`.
 
@@ -60,6 +65,18 @@ root; no fixed installation path is required.
   narrative remains authored content; HDA does not convert that prose into a
   normalized case/death database.
 
+- `hda_fews.py` — one bounded anonymous FEWS NET `marketpricefacts` page;
+  public-subset results do not establish permissioned or global coverage.
+- `hda_ifrc_go.py` — one bounded anonymous IFRC GO v2 Event page;
+  authenticated/non-public routes are outside the implemented scope.
+- `hda_cerf.py` — bounded anonymous CERF Projects by Year retrieval;
+  other CERF routes are not proved.
+- `hda_cbpf.py` — bounded anonymous CBPF PF Project Summary v4 retrieval;
+  no CBPF-wide completeness or absence claim.
+- `hda_inform.py` — bounded anonymous INFORM country/model scores; proved
+  for INFORM Risk Mid 2026, WorkflowId 515, AFG, indicator INFORM. Other
+  workflows, indicators, and countries are not established by that proof.
+
 `source_registry.json` records source availability, interface status, access
 classes, and known constraints. It is the authoritative source-availability
 surface.
@@ -78,12 +95,19 @@ when deliberate replacement is intended; HDX acquisition applies the decision
 to both the acquired bytes and their `.acquisition.json` sidecar.
 
 Remote inputs and redirects are restricted to HTTP(S). API response bodies are
-bounded at 16 MiB. HDX acquisition defaults to 64 MiB; disposable inspection to
+bounded by each client (16 MiB for the established API clients; 1 MiB for
+the five clients added in v0.3.0). HDX acquisition defaults to 64 MiB; disposable inspection to
 1,000,000 bytes; local inspection and local query inputs to 64 MiB; COD-AB
 archives to 256 MiB; and the selected decompressed GeoJSON member to 512 MiB.
 CSV fields have a finite default parser limit of 1 MiB. The relevant CLI limit
 option may be increased deliberately for an expected larger input; record and
 pagination ceilings remain enforced by each source command.
+
+Where the bounded stdout contract applies, the normal minimum/default is
+256 KiB (262144 bytes). An `hda-output-limit-envelope/v1` response is a
+successful bounded result: `output_limit_exceeded=true` means bulk data were
+intentionally omitted, not that the query failed. Reduce `--stdout-records`
+where supported, or deliberately increase `--stdout-bytes-limit` if needed.
 
 For commands that expose `--timeout`, the value controls socket connection and
 read inactivity. It is not a strict total end-to-end deadline for an operation

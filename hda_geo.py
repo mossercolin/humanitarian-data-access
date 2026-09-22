@@ -20,12 +20,15 @@ from typing import Any, Sequence
 from hda_http import open_http, read_limited, remote_json_loads, require_http_url
 
 
+SOURCE_ID = "ocha_cod_ab"
+INTERFACE_ID = "ocha_cod_ab_hdx_geojson"
 CKAN_ACTION = "https://data.humdata.org/api/3/action"
 USER_AGENT = "hda-geo/1.0"
 API_RESPONSE_LIMIT = 16 * 1024 * 1024
 DEFAULT_ARCHIVE_LIMIT = 256 * 1024 * 1024
 DEFAULT_GEOJSON_MEMBER_LIMIT = 512 * 1024 * 1024
 DECOMPRESSION_CHUNK_SIZE = 1024 * 1024
+DEFAULT_STDOUT_BYTES_LIMIT = 256 * 1024
 
 
 def _timestamp() -> str:
@@ -177,6 +180,8 @@ def access(country: str, admin_level: int, timeout: float,
     }
     result = {
         "schema_version": "hda-geographic-access/v1",
+        "source_id": SOURCE_ID,
+        "interface_id": INTERFACE_ID,
         "country_query": country,
         "admin_level": admin_level,
         "feature_count": len(geojson["features"]),
@@ -209,6 +214,33 @@ def _write_json(path: pathlib.Path, payload: Any, force: bool = False) -> None:
         raise
 
 
+def _stdout_bytes(result: dict[str, Any], byte_limit: int) -> bytes:
+    normal = (json.dumps(result, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    if len(normal) <= byte_limit:
+        return normal
+    envelope = {
+        key: result[key]
+        for key in (
+            "source_id", "interface_id", "country_query", "admin_level",
+            "feature_count", "crs", "crs_claim", "lineage", "geojson_output",
+        )
+        if key in result
+    }
+    envelope.update({
+        "schema_version": "hda-output-limit-envelope/v1",
+        "source_schema_version": result.get("schema_version"),
+        "stdout_bytes_limit": byte_limit,
+        "normal_serialized_bytes": len(normal),
+        "output_limit_exceeded": True,
+        "data_omitted": True,
+        "reason": "serialized geographic output exceeds stdout byte limit; identities omitted",
+    })
+    prepared = (json.dumps(envelope, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    if len(prepared) > byte_limit:
+        raise ValueError("output-limit envelope exceeds stdout byte limit")
+    return prepared
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="operation", required=True)
@@ -223,6 +255,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     boundary.add_argument("--timeout", type=float, default=60)
     for command in (resolve, boundary):
         command.add_argument(
+            "--stdout-bytes-limit",
+            type=int,
+            default=DEFAULT_STDOUT_BYTES_LIMIT,
+            help=f"maximum serialized stdout bytes (minimum/default: {DEFAULT_STDOUT_BYTES_LIMIT}); increase deliberately for larger output",
+        )
+        command.add_argument(
             "--archive-byte-limit",
             type=int,
             default=DEFAULT_ARCHIVE_LIMIT,
@@ -236,6 +274,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     args = parser.parse_args(argv)
     try:
+        if args.stdout_bytes_limit < DEFAULT_STDOUT_BYTES_LIMIT:
+            raise ValueError(f"stdout byte limit must be at least {DEFAULT_STDOUT_BYTES_LIMIT}")
         level = 0 if args.operation == "resolve" else args.admin_level
         if not 0 <= level <= 9:
             raise ValueError("admin level must be between 0 and 9")
@@ -254,11 +294,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             _write_json(args.output, geojson, args.force)
             result["geojson_output"] = str(args.output)
-        print(json.dumps(result, indent=2, sort_keys=True))
+        prepared = _stdout_bytes(result, args.stdout_bytes_limit)
+        sys.stdout.buffer.write(prepared)
         return 0
     except Exception as exc:
-        print(json.dumps({"status": "ERROR", "error": str(exc)}, sort_keys=True), file=sys.stderr)
-        return 1
+        parser.exit(1, f"HDA GEO failed: {exc}\n")
 
 
 if __name__ == "__main__":

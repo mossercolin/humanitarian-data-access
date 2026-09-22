@@ -31,6 +31,7 @@ OPERATIONS = (
 )
 DEFAULT_MAX_RECORDS = 100
 DEFAULT_STDOUT_RECORDS = 5
+DEFAULT_STDOUT_BYTES_LIMIT = 256 * 1024
 MAX_RECORDS = 10_000
 PARAMETER_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_\[\]]*$")
 USER_AGENT = "hda-unhcr/1.0"
@@ -164,6 +165,42 @@ def _positive(value: str) -> int:
     return result
 
 
+def _stdout_bytes_limit(value: str) -> int:
+    result = _positive(value)
+    if result < DEFAULT_STDOUT_BYTES_LIMIT:
+        raise argparse.ArgumentTypeError(f"must be at least {DEFAULT_STDOUT_BYTES_LIMIT}")
+    return result
+
+
+def _query_stdout_bytes(result: dict[str, Any], limit: int) -> bytes:
+    normal = (json.dumps(result, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")
+    if len(normal) <= limit:
+        return normal
+    envelope = {
+        "schema_version": "hda-output-limit-envelope/v1",
+        "source_schema_version": result["schema_version"],
+        **{key: result[key] for key in ("source_id", "interface_id", "operation", "request_scope", "lineage")},
+        "network": {
+            **{key: result["network"][key] for key in (
+                "anonymous", "pages_retrieved", "records_retrieved", "reported_max_pages"
+            )},
+            "request_count": len(result["network"]["requests"]),
+        },
+        "result": {key: result["result"][key] for key in (
+            "returned_count", "returned_to_stdout", "truncated_for_stdout", "complete_result_artifact"
+        )},
+        "stdout_bytes_limit": limit,
+        "normal_serialized_bytes": len(normal),
+        "output_limit_exceeded": True,
+        "data_omitted": True,
+        "reason": "Query JSON exceeds stdout byte limit; result.records and network.requests omitted.",
+    }
+    encoded = (json.dumps(envelope, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")
+    if len(encoded) > limit:
+        raise ValueError("output-limit envelope exceeds stdout byte limit")
+    return encoded
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -175,6 +212,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     query_parser.add_argument("--page-size", type=_positive, default=100)
     query_parser.add_argument("--max-records", type=_positive, default=DEFAULT_MAX_RECORDS)
     query_parser.add_argument("--stdout-records", type=_positive, default=DEFAULT_STDOUT_RECORDS)
+    query_parser.add_argument("--stdout-bytes-limit", type=_stdout_bytes_limit, default=DEFAULT_STDOUT_BYTES_LIMIT)
     query_parser.add_argument("--output", type=pathlib.Path)
     query_parser.add_argument("--force", action="store_true", help="deliberately replace an existing output artifact")
     parser.add_argument("--timeout", type=float, default=30.0)
@@ -188,8 +226,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.max_records > MAX_RECORDS:
                 raise ValueError(f"max records cannot exceed {MAX_RECORDS}")
             result = query(args.operation.strip("/"), _parse_params(args.param), args.start_page, args.page_size, args.max_records, args.stdout_records, args.output, args.timeout, args.force)
-        json.dump(result, sys.stdout, ensure_ascii=False, sort_keys=True, indent=2)
-        print()
+        if args.command == "query":
+            sys.stdout.buffer.write(_query_stdout_bytes(result, args.stdout_bytes_limit))
+        else:
+            json.dump(result, sys.stdout, ensure_ascii=False, sort_keys=True, indent=2)
+            print()
         return 0
     except (OSError, ValueError, TypeError, json.JSONDecodeError, urllib.error.URLError) as exc:
         parser.exit(1, f"HDA UNHCR operation failed: {exc}\n")

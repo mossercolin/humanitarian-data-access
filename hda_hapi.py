@@ -18,15 +18,17 @@ from typing import Any, Sequence
 from hda_http import open_http, read_limited, remote_json_loads, require_http_url
 
 
+SOURCE_ID = "hdx_hapi"
+INTERFACE_ID = "hdx_hapi_v2"
 OPENAPI_URL = "https://hapi.humdata.org/openapi.json"
 BASE_URL = "https://hapi.humdata.org/api/v2"
 MAX_PAGE_SIZE = 10_000
 MAX_RECORDS = 100_000
 DEFAULT_STDOUT_RECORDS = 5
+DEFAULT_STDOUT_BYTES_LIMIT = 256 * 1024
 MAX_LINEAGE_RESOURCES = 20
-# The live HAPI edge returned HTTP 202 with an empty body for custom and
-# Some intermediary paths reject Python's default user agent even though the
-# documented curl-style access works.
+# Prior proof required the documented curl-style UA on some intermediary/live
+# HAPI paths.
 USER_AGENT = "curl/8.7.1"
 API_RESPONSE_LIMIT = 16 * 1024 * 1024
 
@@ -97,6 +99,8 @@ def discover(timeout: float) -> dict[str, Any]:
         endpoints.append({"endpoint": endpoint, "parameters": parameters})
     return {
         "schema_version": "hda-hapi-surface/v1",
+        "source_id": SOURCE_ID,
+        "interface_id": INTERFACE_ID,
         "source": "HDX HAPI",
         "base_endpoint": BASE_URL,
         "openapi_url": OPENAPI_URL,
@@ -192,12 +196,12 @@ def query(
         raise ValueError(f"unknown endpoint {endpoint!r}; run 'hda_hapi.py list'")
     definitions = {item.get("name"): item for item in operations[endpoint]["parameters"]}
     forbidden = {"app_identifier", "output_format", "limit", "offset"}
-    unknown = sorted(set(raw_params) - set(definitions))
-    if unknown:
-        raise ValueError(f"unsupported parameter(s) for {endpoint}: {unknown}")
     supplied_forbidden = sorted(set(raw_params) & forbidden)
     if supplied_forbidden:
         raise ValueError(f"client controls parameter(s): {supplied_forbidden}")
+    unknown = sorted(set(raw_params) - set(definitions))
+    if unknown:
+        raise ValueError(f"unsupported parameter(s) for {endpoint}: {unknown}")
     params = {}
     for name, value in raw_params.items():
         schema = definitions[name].get("schema") if isinstance(definitions[name].get("schema"), dict) else {}
@@ -275,6 +279,8 @@ def query(
     stdout_truncated = len(records) > stdout_records
     return {
         **{key: complete[key] for key in ("schema_version", "request_scope", "lineage", "pagination")},
+        "source_id": SOURCE_ID,
+        "interface_id": INTERFACE_ID,
         "result": {
             "returned_to_stdout": min(len(records), stdout_records),
             "truncated_for_stdout": stdout_truncated,
@@ -282,6 +288,44 @@ def query(
             "records": records[:stdout_records],
         },
     }
+
+
+def _stdout_bytes(result: dict[str, Any], command: str, limit: int) -> bytes:
+    def serialize(value: dict[str, Any]) -> bytes:
+        return (json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")
+
+    normal = serialize(result)
+    if len(normal) <= limit:
+        return normal
+    envelope = {
+        "schema_version": "hda-output-limit-envelope/v1",
+        "source_schema_version": result["schema_version"],
+        "source_id": result["source_id"],
+        "interface_id": result["interface_id"],
+        "stdout_bytes_limit": limit,
+        "normal_serialized_bytes": len(normal),
+        "output_limit_exceeded": True,
+        "data_omitted": True,
+        "reason": "Endpoints or result records were omitted because the serialized model-facing stdout limit was exceeded.",
+    }
+    if command == "list":
+        for key in (
+            "source", "base_endpoint", "openapi_url", "api_version",
+            "discovered_at_utc", "authentication", "pagination",
+            "response_formats", "endpoint_count",
+        ):
+            envelope[key] = result[key]
+    else:
+        for key in ("request_scope", "lineage", "pagination"):
+            envelope[key] = result[key]
+        envelope["result"] = {
+            key: result["result"][key]
+            for key in ("returned_to_stdout", "truncated_for_stdout", "complete_result_artifact")
+        }
+    emitted = serialize(envelope)
+    if len(emitted) > limit:
+        raise ValueError("output-limit envelope exceeds stdout byte limit")
+    return emitted
 
 
 def _positive(value: str) -> int:
@@ -303,9 +347,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     query_parser.add_argument("--stdout-records", type=_positive, default=DEFAULT_STDOUT_RECORDS)
     query_parser.add_argument("--output", type=pathlib.Path)
     query_parser.add_argument("--force", action="store_true", help="deliberately replace an existing output artifact")
+    parser.add_argument("--stdout-bytes-limit", type=_positive, default=DEFAULT_STDOUT_BYTES_LIMIT,
+                        help=f"serialized UTF-8 stdout ceiling including newline (minimum/default: {DEFAULT_STDOUT_BYTES_LIMIT})")
     parser.add_argument("--timeout", type=float, default=30.0)
     args = parser.parse_args(argv)
     try:
+        if args.stdout_bytes_limit < DEFAULT_STDOUT_BYTES_LIMIT:
+            raise ValueError(f"--stdout-bytes-limit must be at least the default {DEFAULT_STDOUT_BYTES_LIMIT}")
         if args.timeout <= 0:
             raise ValueError("timeout must be positive")
         if args.command == "list":
@@ -316,8 +364,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.max_records > MAX_RECORDS:
                 raise ValueError(f"max records cannot exceed {MAX_RECORDS}")
             result = query(args.endpoint.strip("/"), _parse_params(args.param), args.page_size, args.max_records, args.stdout_records, args.output, args.timeout, args.force)
-        json.dump(result, sys.stdout, ensure_ascii=False, sort_keys=True, indent=2)
-        print()
+        sys.stdout.buffer.write(_stdout_bytes(result, args.command, args.stdout_bytes_limit))
         return 0
     except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError, urllib.error.URLError) as exc:
         parser.exit(1, f"HDA HAPI operation failed: {exc}\n")

@@ -19,6 +19,7 @@ MAX_CANDIDATES = 100
 MAX_RESOURCES = 100
 DESCRIPTION_LIMIT = 500
 API_RESPONSE_LIMIT = 16 * 1024 * 1024
+DEFAULT_STDOUT_BYTES_LIMIT = 256 * 1024
 
 
 def _bounded_text(value: Any, limit: int = DESCRIPTION_LIMIT) -> str | None:
@@ -134,6 +135,28 @@ def discover(
     return output
 
 
+def _stdout_bytes(output: dict[str, Any], limit: int) -> bytes:
+    normal = (json.dumps(output, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")
+    if len(normal) <= limit:
+        return normal
+    envelope = {
+        "schema_version": "hda-output-limit-envelope/v1",
+        "catalog": output["catalog"],
+        "search": output["search"],
+        "counts": output["counts"],
+        "bounded": output["bounded"],
+        "stdout_bytes_limit": limit,
+        "normal_serialized_bytes": len(normal),
+        "output_limit_exceeded": True,
+        "data_omitted": True,
+        "reason": "Candidate/resource payloads were omitted because the serialized model-facing stdout limit was exceeded.",
+    }
+    emitted = (json.dumps(envelope, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")
+    if len(emitted) > limit:
+        raise ValueError("output-limit envelope exceeds stdout byte limit")
+    return emitted
+
+
 def _positive_int(value: str) -> int:
     parsed = int(value)
     if parsed < 1:
@@ -159,7 +182,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="exact CKAN fq filter; repeat to apply multiple filters",
     )
     parser.add_argument("--timeout", type=float, default=30.0, help="HTTP timeout in seconds")
+    parser.add_argument(
+        "--stdout-bytes-limit",
+        type=_positive_int,
+        default=DEFAULT_STDOUT_BYTES_LIMIT,
+        help="serialized stdout byte ceiling (minimum/default: 262144; larger values override)",
+    )
     args = parser.parse_args(argv)
+    if args.stdout_bytes_limit < DEFAULT_STDOUT_BYTES_LIMIT:
+        parser.error(f"--stdout-bytes-limit must be at least the default {DEFAULT_STDOUT_BYTES_LIMIT}")
     if args.limit > MAX_CANDIDATES:
         parser.error(f"--limit cannot exceed {MAX_CANDIDATES}")
     if args.resource_limit > MAX_RESOURCES:
@@ -168,11 +199,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("--timeout must be positive")
     try:
         output = discover(args.terms, args.limit, args.resource_limit, args.filters, args.timeout)
+        prepared = _stdout_bytes(output, args.stdout_bytes_limit)
     except Exception as exc:
         print(f"HDX discovery failed: {exc}", file=sys.stderr)
         return 1
-    json.dump(output, sys.stdout, ensure_ascii=False, sort_keys=True, indent=2)
-    sys.stdout.write("\n")
+    sys.stdout.buffer.write(prepared)
     return 0
 
 

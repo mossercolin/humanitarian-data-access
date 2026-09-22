@@ -18,12 +18,15 @@ from typing import Any, Sequence
 from hda_http import open_http, read_limited, remote_json_loads, require_http_url
 
 
+SOURCE_ID = "ocha_hpc"
+INTERFACE_ID = "ocha_hpc_v2_public"
 SOURCE = "OCHA HPC"
 BASE_URL = "https://api.hpc.tools/v2/public"
 SWAGGER_URL = "https://api.hpc.tools/api-docs"
 API_RESPONSE_LIMIT = 16 * 1024 * 1024
 DEFAULT_MAX_RECORDS = 10
 DEFAULT_STDOUT_RECORDS = 5
+DEFAULT_STDOUT_BYTES_LIMIT = 256 * 1024
 MAX_RECORDS = 10_000
 MAX_RELATIONSHIPS = 100
 USER_AGENT = "hda-hpc/1.0"
@@ -88,13 +91,15 @@ def discover(timeout: float) -> dict[str, Any]:
         })
     return {
         "schema_version": "hda-hpc-surface/v1",
+        "source_id": SOURCE_ID,
+        "interface_id": INTERFACE_ID,
         "source": SOURCE,
         "base_endpoint": BASE_URL,
         "swagger_url": SWAGGER_URL,
         "api_version": spec.get("info", {}).get("version"),
         "discovered_at_utc": _timestamp(),
         "authentication": {"required": False, "class": "public anonymous"},
-        "pagination": {"server_side": False, "advertised_parameters": []},
+        "pagination": {"method": "none_observed", "advertised_parameters": []},
         "response_formats": sorted(formats),
         "endpoint_count": len(endpoints),
         "endpoints": endpoints,
@@ -260,6 +265,8 @@ def query(
     stdout_slice = selected[:stdout_records]
     return {
         "schema_version": "hda-hpc-result/v1",
+        "source_id": SOURCE_ID,
+        "interface_id": INTERFACE_ID,
         "request_scope": {
             "endpoint": endpoint,
             "parameters": literal_params,
@@ -294,6 +301,78 @@ def _positive(value: str) -> int:
     return result
 
 
+def _stdout_bytes_limit(value: str) -> int:
+    result = _positive(value)
+    if result < DEFAULT_STDOUT_BYTES_LIMIT:
+        raise argparse.ArgumentTypeError(f"must be at least {DEFAULT_STDOUT_BYTES_LIMIT}")
+    return result
+
+
+def _list_stdout_bytes(result: dict[str, Any], limit: int) -> bytes:
+    normal = (json.dumps(result, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")
+    if len(normal) <= limit:
+        return normal
+    envelope = {
+        "schema_version": "hda-output-limit-envelope/v1",
+        "source_schema_version": result["schema_version"],
+        **{key: result[key] for key in (
+            "source_id", "interface_id", "source", "base_endpoint", "swagger_url",
+            "api_version", "discovered_at_utc", "authentication", "pagination",
+            "response_formats", "endpoint_count",
+        )},
+        "stdout_bytes_limit": limit,
+        "normal_serialized_bytes": len(normal),
+        "output_limit_exceeded": True,
+        "data_omitted": True,
+        "reason": (
+            "Discovery output exceeds the stdout byte limit; endpoints are omitted. "
+            "Deliberately increase --stdout-bytes-limit to retrieve the full list."
+        ),
+    }
+    prepared = (json.dumps(envelope, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")
+    if len(prepared) > limit:
+        raise ValueError("output-limit envelope exceeds stdout byte limit; increase --stdout-bytes-limit")
+    return prepared
+
+
+def _query_stdout_bytes(result: dict[str, Any], limit: int) -> bytes:
+    def serialize(value: Any) -> bytes:
+        return (json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")
+
+    normal = serialize(result)
+    if len(normal) <= limit:
+        return normal
+    lineage = result["lineage"]
+    envelope = {
+        "schema_version": "hda-output-limit-envelope/v1",
+        "source_schema_version": result["schema_version"],
+        "source_id": result["source_id"],
+        "interface_id": result["interface_id"],
+        "request_scope": result["request_scope"],
+        "pagination": result["pagination"],
+        "lineage": {key: lineage[key] for key in (
+            "source", "base_endpoint", "endpoint", "request_parameters",
+            "retrieved_at_utc", "artifact_path", "explicit_relationships_truncated",
+        )},
+        "native_id_count": len(lineage["native_ids"]),
+        "explicit_relationship_count": len(lineage["explicit_relationships"]),
+        "result": {key: value for key, value in result["result"].items() if key != "records"},
+        "stdout_bytes_limit": limit,
+        "normal_serialized_bytes": len(normal),
+        "output_limit_exceeded": True,
+        "data_omitted": True,
+        "reason": (
+            "Query output exceeds the stdout byte limit; records, native IDs, and explicit "
+            "relationships are omitted. Use the artifact if available, narrow the query, "
+            "or deliberately increase --stdout-bytes-limit."
+        ),
+    }
+    prepared = serialize(envelope)
+    if len(prepared) > limit:
+        raise ValueError("output-limit envelope exceeds stdout byte limit; narrow the query or increase --stdout-bytes-limit")
+    return prepared
+
+
 def _nonnegative(value: str) -> int:
     result = int(value)
     if result < 0:
@@ -304,13 +383,15 @@ def _nonnegative(value: str) -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
-    subparsers.add_parser("list", help="discover public endpoints and parameters from live Swagger")
+    list_parser = subparsers.add_parser("list", help="discover public endpoints and parameters from live Swagger")
+    list_parser.add_argument("--stdout-bytes-limit", type=_stdout_bytes_limit, default=DEFAULT_STDOUT_BYTES_LIMIT)
     query_parser = subparsers.add_parser("query", help="query any discovered public endpoint")
     query_parser.add_argument("endpoint")
     query_parser.add_argument("--param", action="append", default=[], metavar="NAME=VALUE")
     query_parser.add_argument("--offset", type=_nonnegative, default=0)
     query_parser.add_argument("--max-records", type=_positive, default=DEFAULT_MAX_RECORDS)
     query_parser.add_argument("--stdout-records", type=_positive, default=DEFAULT_STDOUT_RECORDS)
+    query_parser.add_argument("--stdout-bytes-limit", type=_stdout_bytes_limit, default=DEFAULT_STDOUT_BYTES_LIMIT)
     query_parser.add_argument("--output", type=pathlib.Path)
     query_parser.add_argument("--force", action="store_true", help="deliberately replace an existing output artifact")
     parser.add_argument("--timeout", type=float, default=30.0)
@@ -320,6 +401,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise ValueError("timeout must be positive")
         if args.command == "list":
             result = discover(args.timeout)
+            sys.stdout.buffer.write(_list_stdout_bytes(result, args.stdout_bytes_limit))
         else:
             if args.max_records > MAX_RECORDS:
                 raise ValueError(f"max records cannot exceed {MAX_RECORDS}")
@@ -327,8 +409,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.endpoint.strip("/"), _parse_params(args.param), args.offset,
                 args.max_records, args.stdout_records, args.output, args.timeout, args.force,
             )
-        json.dump(result, sys.stdout, ensure_ascii=False, sort_keys=True, indent=2)
-        print()
+            sys.stdout.buffer.write(_query_stdout_bytes(result, args.stdout_bytes_limit))
         return 0
     except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError, urllib.error.URLError) as exc:
         parser.exit(1, f"HDA HPC operation failed: {exc}\n")

@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.3.0 — 2026-09-22
+
+### Capabilities and distribution
+
+- Added bounded public clients for FEWS NET market prices, IFRC GO Events,
+  CERF Projects by Year, CBPF PF Project Summary v4, and INFORM country/model
+  scores. Each remains limited to its documented route and proof scope.
+- The registry now marks 15 interfaces as access-ready; these are dated,
+  scoped access proofs, not guarantees of universal coverage or availability.
+- Expanded the clean public allowlist from 19 to 24 files to ship those five
+  existing clients. Private history, tests, research, evidence, artifacts,
+  presentation-specific code, and local deployment state remain excluded.
+
+### Output contracts and corrections
+
+- Standardized bounded stdout handling across the affected access and local
+  query commands, with explicit successful omission envelopes for oversized
+  results and preserved source/request provenance.
+- Included corrections to HDX discovery/acquisition, local tabular queries,
+  HAPI, HPC, UNHCR, GDACS, and geographic access.
+- Retained source-native identity, geographic and temporal semantics, scoped
+  negatives, no-clobber durable outputs, and the external-content trust boundary.
+- No new dependencies or installation requirements. Timeout remains a socket
+  connect/read inactivity limit, not a total operation deadline.
+
 ## v0.2.1 — 2026-08-28
 
 ### Hardening and corrections

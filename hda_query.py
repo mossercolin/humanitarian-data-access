@@ -20,6 +20,7 @@ from typing import Any
 OPS = {"eq", "ne", "lt", "lte", "gt", "gte", "contains"}
 AGGREGATES = {"count", "sum", "min", "max", "avg"}
 MAX_RETRIEVAL_LIMIT = 100_000
+DEFAULT_STDOUT_BYTES_LIMIT = 256 * 1024
 DEFAULT_LOCAL_INPUT_LIMIT = 64 * 1024 * 1024
 DEFAULT_CSV_FIELD_SIZE_LIMIT = 1024 * 1024
 
@@ -184,6 +185,10 @@ def main() -> int:
     parser.add_argument("csv", type=pathlib.Path)
     parser.add_argument("--query", required=True, help="JSON query object")
     parser.add_argument("--stdout-rows", type=int, default=10)
+    parser.add_argument(
+        "--stdout-bytes-limit", type=int, default=DEFAULT_STDOUT_BYTES_LIMIT,
+        help=f"maximum serialized stdout bytes (minimum/default: {DEFAULT_STDOUT_BYTES_LIMIT}); increase deliberately for larger output",
+    )
     parser.add_argument("--output-dir", type=pathlib.Path)
     parser.add_argument("--force", action="store_true", help="deliberately replace an existing derived query artifact")
     parser.add_argument(
@@ -196,6 +201,8 @@ def main() -> int:
     )
     args = parser.parse_args()
     try:
+        if args.stdout_bytes_limit < DEFAULT_STDOUT_BYTES_LIMIT:
+            raise ValueError(f"stdout-bytes-limit must be at least {DEFAULT_STDOUT_BYTES_LIMIT}")
         if args.stdout_rows < 1:
             raise ValueError("stdout-rows must be positive")
         if args.local_input_byte_limit < 1 or args.csv_field_size_limit < 1:
@@ -250,8 +257,24 @@ def main() -> int:
                 "rows": rows[:args.stdout_rows],
             },
         }
-        json.dump(response, sys.stdout, ensure_ascii=False, sort_keys=True, indent=2)
-        print()
+        serialized = (json.dumps(response, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")
+        if len(serialized) > args.stdout_bytes_limit:
+            envelope = {
+                "schema_version": "hda-output-limit-envelope/v1",
+                "source_schema_version": response["schema_version"],
+                "lineage": lineage,
+                "query": query,
+                "result": {key: value for key, value in response["result"].items() if key != "rows"},
+                "stdout_bytes_limit": args.stdout_bytes_limit,
+                "normal_serialized_bytes": len(serialized),
+                "output_limit_exceeded": True,
+                "data_omitted": True,
+                "reason": "Serialized response exceeds stdout byte limit; result.rows omitted.",
+            }
+            serialized = (json.dumps(envelope, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")
+            if len(serialized) > args.stdout_bytes_limit:
+                raise ValueError("output-limit envelope exceeds stdout byte limit")
+        sys.stdout.buffer.write(serialized)
         return 0
     except (OSError, ValueError, KeyError, TypeError, csv.Error, json.JSONDecodeError) as exc:
         parser.exit(1, f"HDA query failed: {exc}\n")
