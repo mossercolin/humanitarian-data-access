@@ -1,6 +1,6 @@
 # HDA — Humanitarian Data Access
 
-Current release: **v0.3.0**.
+Current release: **v0.3.1**.
 
 HDA is agent-oriented, scoped, traceable access to public/open humanitarian and
 relevant contextual data. It is structured-first, not structured-only: it

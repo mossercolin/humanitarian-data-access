@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.3.1 — 2026-09-22
+
+### Skill consumer-contract correction
+
+- Require consuming agents to answer the humanitarian question directly with
+  supported retrieved evidence, leading with the requested facts.
+- Let material scope, time, and provenance caveats qualify, not replace, the
+  supported answer. Keep internal HDA status and metadata internal unless
+  requested or needed to explain a material limitation.
+- No runtime, schema, source-interface, or registry changes. The public
+  distribution remains the same 24-file allowlist.
+
 ## v0.3.0 — 2026-09-22
 
 ### Capabilities and distribution
