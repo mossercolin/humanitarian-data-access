@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.3.2 — 2026-09-30
+
+### Core hardening and documentation
+
+- Substantially improved code narratability and operational documentation in
+  the core HTTP, local-query, and HDX discovery and acquisition tooling.
+- Strengthened HTTP URL, redirect, and response-body boundary handling.
+- Hardened local query validation and numeric, resource, and nested-operation
+  boundaries.
+- Improved HDX discovery response validation and bounded-result semantics.
+- Strengthened HDX acquisition and inspection behavior, including CSV parser
+  state restoration, partial UTF-8 boundary handling, bounded direct-call
+  contracts, rollback of data/sidecar publication, explicit filesystem
+  guarantees, and safer stdout serialization.
+
+### Compatibility and scope
+
+- No new humanitarian source or interface was added in this release.
+- HDA remains Python 3.9+ and standard-library-only, with no new dependency or
+  installation requirement.
+
 ## v0.3.1 — 2026-09-22
 
 ### Skill consumer-contract correction
