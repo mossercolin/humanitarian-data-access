@@ -1,6 +1,18 @@
 #!/usr/bin/env python3
 """Discover and query HDX HAPI through one bounded, endpoint-agnostic interface."""
 
+# HAPI-specific flow: fetch live OpenAPI to find v2 GET endpoints instead of
+# maintaining a catalog for individual humanitarian topics. The v2 URL, JSON
+# "data" envelope, and resource metadata convention remain HDA-specific.
+# "list" reports live endpoint/operation-parameter facts alongside some local
+# declarations; its parameter list is not a list of caller-settable options.
+# "query" checks parameter names, makes limited scalar conversions, obtains a
+# non-secret app identifier, and fetches JSON pages up to a record ceiling.
+# It then attaches bounded resource metadata as retrieval lineage, optionally
+# saves all retrieved records, and emits a smaller, byte-bounded stdout view.
+# Neither a retrieved result nor lineage proves source-wide completeness,
+# humanitarian meaning, validity, or cross-source comparability.
+
 from __future__ import annotations
 
 import argparse
@@ -27,8 +39,7 @@ MAX_RECORDS = 100_000
 DEFAULT_STDOUT_RECORDS = 5
 DEFAULT_STDOUT_BYTES_LIMIT = 256 * 1024
 MAX_LINEAGE_RESOURCES = 20
-# Prior proof required the documented curl-style UA on some intermediary/live
-# HAPI paths.
+# Keep this curl-style User-Agent as an existing HAPI compatibility choice.
 USER_AGENT = "curl/8.7.1"
 API_RESPONSE_LIMIT = 16 * 1024 * 1024
 
@@ -37,6 +48,8 @@ def _timestamp() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+# The 16 MiB limit applies independently to each HTTP response (OpenAPI, data
+# page, or metadata lookup); it does not cap total bytes across a query.
 def _request_json(url: str, timeout: float) -> dict[str, Any]:
     request = urllib.request.Request(require_http_url(url), headers={"Accept": "application/json", "User-Agent": USER_AGENT})
     with open_http(request, timeout=timeout) as response:
@@ -59,6 +72,8 @@ def _openapi(timeout: float) -> dict[str, Any]:
     return spec
 
 
+# Only operation-level parameter references into components/parameters are
+# resolved; path-level parameters and schema-level references are not expanded.
 def _resolve_parameter(spec: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
     reference = item.get("$ref")
     if not reference:
@@ -66,6 +81,8 @@ def _resolve_parameter(spec: dict[str, Any], item: dict[str, Any]) -> dict[str, 
     return spec["components"]["parameters"][reference.rsplit("/", 1)[-1]]
 
 
+# Select HAPI v2 GET operations, not every OpenAPI path or HTTP method. The
+# app-identifier encoding utility is deliberately outside this data surface.
 def _operations(spec: dict[str, Any]) -> dict[str, dict[str, Any]]:
     result = {}
     for path, path_item in spec["paths"].items():
@@ -80,6 +97,12 @@ def _operations(spec: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return result
 
 
+# Discovery gets endpoints, operation parameters, types/enums, and API version
+# from live OpenAPI. Authentication metadata, response formats, and page-size
+# limit below are HDA declarations, not extracted live schema capabilities.
+# Only app_identifier is hidden: output_format, limit, and offset may still be
+# listed even though query() reserves them. "required" and "allowed_values"
+# describe source schema metadata; query() does not enforce them all.
 def discover(timeout: float) -> dict[str, Any]:
     spec = _openapi(timeout)
     endpoints = []
@@ -118,6 +141,12 @@ def discover(timeout: float) -> dict[str, Any]:
     }
 
 
+# The first nonempty identifier wins: HDA_HAPI_APP_IDENTIFIER, then
+# HMCP_HDX_APP_ID, then the humanitarian-hapi MCP server entry in
+# ~/.openclaw/openclaw.json. That last path is retained as host compatibility;
+# an absent, unreadable, or malformed configuration silently yields no value.
+# list/discover needs no identifier; query does. This is client identification,
+# not a secret API key.
 def _configured_identifier() -> str | None:
     for name in ("HDA_HAPI_APP_IDENTIFIER", "HMCP_HDX_APP_ID"):
         if os.environ.get(name):
@@ -131,6 +160,10 @@ def _configured_identifier() -> str | None:
         return None
 
 
+# Caller values are strings. Convert only inline integer/number/boolean types;
+# booleans accept true/false (case-insensitive) only. This is not full OpenAPI
+# validation: required fields, enums, ranges, formats, arrays, and referenced
+# schemas are not comprehensively enforced here.
 def _coerce(value: str, schema: dict[str, Any]) -> Any:
     kind = schema.get("type")
     if kind == "integer":
@@ -190,6 +223,8 @@ def query(
 ) -> dict[str, Any]:
     if output is not None and output.exists() and not force:
         raise FileExistsError(f"output already exists: {output}; use --force to replace it")
+    # Every query re-reads the live operation definitions before checking
+    # caller-supplied names. Reserved names remain under HDA's control.
     spec = _openapi(timeout)
     operations = _operations(spec)
     if endpoint not in operations:
@@ -210,6 +245,10 @@ def query(
     if not identifier:
         raise ValueError("HDX HAPI app identifier unavailable; set HDA_HAPI_APP_IDENTIFIER or HMCP_HDX_APP_ID")
 
+    # HDA forces JSON and starts at offset zero. Stop on a short page (assuming
+    # the source honors the requested limit) or the local max_records ceiling.
+    # Offset pagination is not a stable snapshot; concurrent source changes may
+    # duplicate or omit records across pages. The timestamp marks query start.
     retrieved_at = _timestamp()
     records: list[dict[str, Any]] = []
     offset = 0
@@ -231,7 +270,15 @@ def query(
         if len(page) < requested:
             break
 
+    # A full final page makes "may_have_more" possible, not certain. The source
+    # total is unknown. next_offset is descriptive only: the CLI has no option
+    # to resume at that offset.
     may_have_more = last_page_size == min(page_size, max_records - (len(records) - last_page_size))
+    # Preserve all distinct source resource IDs. For lineage, inspect only the
+    # first 20 IDs in lexical order via sequential metadata/resource requests;
+    # skip these requests when already querying metadata/resource. Missing/empty
+    # metadata rows are skipped, but a request failure aborts the whole query.
+    # The truncation flag describes the 20-ID ceiling, not skipped responses.
     resource_ids = sorted({str(item["resource_hdx_id"]) for item in records if item.get("resource_hdx_id")})
     resource_metadata = []
     if endpoint != "metadata/resource":
@@ -247,6 +294,9 @@ def query(
             metadata_rows = metadata_payload.get("data")
             if isinstance(metadata_rows, list) and metadata_rows and isinstance(metadata_rows[0], dict):
                 resource_metadata.append(metadata_rows[0])
+    # Lineage records source/request provenance and attached raw metadata, not
+    # a semantic judgment. Request parameters here are coerced caller values,
+    # excluding HDA-controlled paging/format and the app identifier.
     lineage = {
         "source": "HDX HAPI",
         "base_endpoint": BASE_URL,
@@ -260,6 +310,9 @@ def query(
         "resource_metadata_truncated": len(resource_ids) > MAX_LINEAGE_RESOURCES,
         "resource_metadata_endpoint": f"{BASE_URL}/metadata/resource",
     }
+    # "Complete" means all records retrieved within max_records, not the
+    # complete HAPI dataset. This optional artifact has top-level records;
+    # stdout instead nests a record window under "result".
     complete = {
         "schema_version": "hda-hapi-result/v1",
         "request_scope": {"endpoint": endpoint, "parameters": params, "page_size": page_size, "max_records": max_records},
@@ -275,7 +328,11 @@ def query(
         },
         "records": records,
     }
+    # Write the optional artifact only after pagination and all lineage lookups
+    # succeed; without --output, there is no persisted full retrieved result.
     artifact_path = _write_json(output, complete, force) if output else None
+    # These counts describe the intended record-count stdout window. A later
+    # serialized-byte fallback may omit all those records without revising them.
     stdout_truncated = len(records) > stdout_records
     return {
         **{key: complete[key] for key in ("schema_version", "request_scope", "lineage", "pagination")},
@@ -290,6 +347,12 @@ def query(
     }
 
 
+# Bound the final serialized stdout, after remote retrieval and any artifact
+# write. If the window is too large, emit an output-limit envelope instead of
+# records/endpoints, retaining relevant scope/lineage/pagination and marking
+# data_omitted; its retained record counts refer to the intended window, not
+# records actually emitted. The same byte fallback applies to list and query.
+# An envelope that itself exceeds the limit fails rather than being truncated.
 def _stdout_bytes(result: dict[str, Any], command: str, limit: int) -> bytes:
     def serialize(value: dict[str, Any]) -> bytes:
         return (json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")
@@ -352,6 +415,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--timeout", type=float, default=30.0)
     args = parser.parse_args(argv)
     try:
+        # This configurable ceiling may be raised but not lowered below 256 KiB.
         if args.stdout_bytes_limit < DEFAULT_STDOUT_BYTES_LIMIT:
             raise ValueError(f"--stdout-bytes-limit must be at least the default {DEFAULT_STDOUT_BYTES_LIMIT}")
         if args.timeout <= 0:
