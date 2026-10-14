@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
 """Discover and query OCHA HPC through one bounded, resource-agnostic interface."""
 
+# Flow: fresh Swagger discovery -> a selected public GET -> one JSON response ->
+# local record selection -> optional complete-response artifact -> bounded stdout.
+# These are distinct scopes. The remote response is read before record windowing;
+# a result window or smaller stdout does not reduce network transfer. Lineage
+# describes this retrieval, not source-wide completeness or humanitarian meaning.
+# Swagger supplies available operations and selected metadata, while this client
+# declares its own authentication and pagination descriptions.
+
 from __future__ import annotations
 
 import argparse
@@ -37,6 +45,11 @@ def _timestamp() -> str:
 
 
 def _request_json(url: str, timeout: float) -> Any:
+    """Read one remote JSON body under the 16 MiB response-byte ceiling.
+
+    The same bound applies to Swagger and data responses. Local record and stdout
+    limits do not reduce the bytes needed to receive this response.
+    """
     request = urllib.request.Request(
         require_http_url(url),
         headers={"Accept": "application/json", "User-Agent": USER_AGENT},
@@ -53,6 +66,7 @@ def _request_json(url: str, timeout: float) -> Any:
 
 
 def _swagger(timeout: float) -> dict[str, Any]:
+    """Fetch live Swagger afresh for each list or query; there is no spec cache."""
     payload = _request_json(SWAGGER_URL, timeout)
     if not isinstance(payload, dict) or not isinstance(payload.get("paths"), dict):
         raise ValueError("OCHA HPC Swagger document has no paths object")
@@ -60,6 +74,11 @@ def _swagger(timeout: float) -> dict[str, Any]:
 
 
 def _public_operations(spec: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Select only GET operations under /v2/public/, keeping templated paths.
+
+    Other methods and paths are excluded; the returned endpoint identifier is
+    the path remainder, including any {parameter} placeholders.
+    """
     operations = {}
     prefix = "/v2/public/"
     for path, path_item in spec["paths"].items():
@@ -79,6 +98,14 @@ def _parameter_summary(item: dict[str, Any]) -> dict[str, Any]:
 
 
 def discover(timeout: float) -> dict[str, Any]:
+    """Describe public GET routes from fresh Swagger, not a cached catalog.
+
+    Parameters come only from inline operation-level definitions; path-item
+    parameters and $ref definitions are not resolved. Response formats collect
+    operation-level "produces" declarations, not negotiated response types:
+    requests always ask for JSON. The authentication and pagination descriptions
+    in this output are local declarations, not deductions from Swagger.
+    """
     spec = _swagger(timeout)
     endpoints = []
     formats = set()
@@ -119,6 +146,12 @@ def _parse_params(values: Sequence[str]) -> dict[str, str]:
 
 
 def _coerce(value: str, definition: dict[str, Any]) -> Any:
+    """Check simple declared integer, number or boolean syntax only.
+
+    This does not enforce enums, ranges, patterns, formats or complex schemas.
+    The request builder deliberately discards the converted value and sends the
+    original string after URL encoding.
+    """
     kind = definition.get("type") or (definition.get("schema") or {}).get("type")
     if kind in {"integer", "number"}:
         return int(value) if kind == "integer" else float(value)
@@ -132,6 +165,13 @@ def _coerce(value: str, definition: dict[str, Any]) -> Any:
 def _build_request(
     endpoint: str, raw_params: dict[str, str], operations: dict[str, dict[str, Any]]
 ) -> tuple[str, dict[str, Any]]:
+    """Construct a URL using inline operation-level Swagger parameters only.
+
+    Reject unknown or missing required parameter names and locations other than
+    path/query; unresolved $ref and path-item parameter definitions are not
+    enforced. Values get limited parsing checks, then retain their original text
+    (percent-encoded in the path or encoded as query-string parameters).
+    """
     if endpoint not in operations:
         raise ValueError(f"unknown endpoint {endpoint!r}; run 'hda_hpc.py list'")
     definitions = {
@@ -154,7 +194,7 @@ def _build_request(
     query_params = []
     for name, raw_value in raw_params.items():
         definition = definitions[name]
-        _coerce(raw_value, definition)
+        _coerce(raw_value, definition)  # Validate syntax; keep raw_value for URL and lineage.
         literal_params[name] = raw_value
         if definition.get("in") == "path":
             rendered_path = rendered_path.replace("{" + name + "}", urllib.parse.quote(raw_value, safe=""))
@@ -169,6 +209,12 @@ def _build_request(
 
 
 def _records(payload: Any) -> tuple[list[Any], str]:
+    """Interpret the received JSON as a collection without semantic inference.
+
+    A dict containing top-level "data" uses that value; otherwise use the root.
+    Null yields no records, a list yields its elements, and every other value
+    (including a dict with a differently named array) counts as one record.
+    """
     if isinstance(payload, dict) and "data" in payload:
         data = payload["data"]
         envelope = "data"
@@ -183,10 +229,23 @@ def _records(payload: Any) -> tuple[list[Any], str]:
 
 
 def _native_ids(records: list[Any]) -> list[Any]:
+    """Collect non-null top-level "id" values from selected dictionary records.
+
+    There is no deduplication or placeholder for records without an ID, so this
+    list need not align positionally with the selected or printed records.
+    """
     return [record["id"] for record in records if isinstance(record, dict) and record.get("id") is not None]
 
 
 def _explicit_relationships(records: list[Any]) -> tuple[list[dict[str, Any]], bool]:
+    """Collect syntactic ID-like fields from the selected record window only.
+
+    Traverse dictionaries and lists depth-first, matching non-null dictionary
+    fields whose names end in exactly "Id" or "Ids" (case-sensitive). Values are
+    kept whole, not checked as real references. The 100-entry ceiling is global
+    across selected records; earlier matches may exhaust it. The returned flag
+    means 100 were reached, NOT that omitted relationships were established.
+    """
     found: list[dict[str, Any]] = []
     stack: list[tuple[Any, str, str | None]] = [
         (record, f"records[{index}]", None) for index, record in reversed(list(enumerate(records)))
@@ -205,6 +264,13 @@ def _explicit_relationships(records: list[Any]) -> tuple[list[dict[str, Any]], b
 
 
 def _write_json(path: pathlib.Path, payload: Any, force: bool = False) -> str:
+    """Publish the full parsed payload as reserialized, sorted, indented JSON.
+
+    This is not the original HTTP byte stream. Write and sync a temporary file
+    beside the destination before replacing it. Existing paths are ordinarily
+    refused unless --force is set; the exists check and replace are not an
+    atomic no-clobber guarantee against concurrent writers.
+    """
     path = path.resolve()
     if path.exists() and not force:
         raise FileExistsError(f"output already exists: {path}; use --force to replace it")
@@ -236,6 +302,22 @@ def query(
     timeout: float,
     force: bool = False,
 ) -> dict[str, Any]:
+    """Query one public GET route, then expose distinct local result scopes.
+
+    Fetch fresh Swagger, build a request, and receive one complete JSON response
+    within the response-byte ceiling; no additional server pages are followed.
+    Interpret the received envelope and select offset/max_records locally. The
+    CLI (not this helper) caps max_records at 10,000. Native IDs and ID-like
+    relationships describe these selected records, even those not printed.
+
+    If requested, publish the complete parsed response as an artifact, regardless
+    of the local selection. Stdout records are a further stdout_records slice;
+    a separate byte limit is applied later by the CLI. source_record_count and
+    has_more/next_offset describe only the received, interpreted collection,
+    never a source-global total or remote pagination. Pagination descriptions
+    are locally declared. Retrieval lineage proves neither completeness nor
+    humanitarian meaning.
+    """
     if output is not None and output.exists() and not force:
         raise FileExistsError(f"output already exists: {output}; use --force to replace it")
     spec = _swagger(timeout)
@@ -245,7 +327,7 @@ def query(
     payload = _request_json(url, timeout)
     all_records, envelope = _records(payload)
     selected = all_records[offset:offset + max_records]
-    source_count = len(all_records)
+    source_count = len(all_records)  # Count in this received envelope, not a source-wide total.
     has_more = offset + len(selected) < source_count
 
     relationships, relationships_truncated = _explicit_relationships(selected)
@@ -285,7 +367,7 @@ def query(
             "next_offset": offset + len(selected) if has_more else None,
         },
         "result": {
-            "returned_count": len(selected),
+            "returned_count": len(selected),  # Selected locally; not necessarily printed.
             "returned_to_stdout": len(stdout_slice),
             "truncated_for_stdout": len(stdout_slice) < len(selected),
             "complete_response_artifact": artifact_path,
@@ -309,6 +391,11 @@ def _stdout_bytes_limit(value: str) -> int:
 
 
 def _list_stdout_bytes(result: dict[str, Any], limit: int) -> bytes:
+    """Bound serialized discovery stdout by bytes, with no record-count limit.
+
+    If oversized, omit the entire endpoint list and return an explanatory
+    envelope. If that envelope also exceeds the ceiling, raise an error.
+    """
     normal = (json.dumps(result, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")
     if len(normal) <= limit:
         return normal
@@ -336,6 +423,14 @@ def _list_stdout_bytes(result: dict[str, Any], limit: int) -> bytes:
 
 
 def _query_stdout_bytes(result: dict[str, Any], limit: int) -> bytes:
+    """Apply a whole-document byte limit after query record-count windowing.
+
+    If oversized, omit records, native IDs and relationships together, retaining
+    counts and retrieval metadata. Retained stdout counters describe the planned
+    record slice, not records emitted after this byte-driven omission; consult
+    data_omitted/output_limit_exceeded instead. If even this envelope is too
+    large, raise an error; any requested artifact was already published.
+    """
     def serialize(value: Any) -> bytes:
         return (json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")
 
@@ -381,6 +476,11 @@ def _nonnegative(value: str) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Expose list (byte bound) and query (record and byte bounds) as CLI commands.
+
+    The stdout-byte ceiling defaults to 256 KiB and can only be increased.
+    Query's max-records limit is enforced here, not inside query().
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
     list_parser = subparsers.add_parser("list", help="discover public endpoints and parameters from live Swagger")

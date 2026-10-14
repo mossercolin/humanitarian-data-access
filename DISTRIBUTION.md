@@ -1,4 +1,4 @@
-# HDA v0.3.2 public product boundary
+# HDA v0.4.0 public product boundary
 
 Build an HDA product directory from empty by copying only this allowlist:
 

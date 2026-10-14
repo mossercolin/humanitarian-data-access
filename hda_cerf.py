@@ -13,6 +13,11 @@ from typing import Any, Sequence
 
 from hda_http import open_http, read_limited, remote_json_loads, require_http_url
 
+# This client reads CERF Projects by Year: the caller's year fills the
+# endpoint path for an anonymous GET with no credentials. The 1 MiB
+# response-body limit is separate from the first-N record window (max 10)
+# and the model-facing stdout limit (default 256 KiB).
+
 SOURCE_ID = "ocha_cerf"
 INTERFACE_ID = "cerf_data_api"
 ENDPOINT = "https://cerfgms-webapi.unocha.org/v1/project/year/{year}.json"
@@ -23,6 +28,9 @@ DEFAULT_STDOUT_BYTES_LIMIT = 256 * 1024
 EMPTY_SCOPE = "No records returned under the current CERF public access scope."
 
 
+# Read bounded JSON and record observed status, content type, response bytes,
+# byte ceiling and final URL. query() expects a top-level array of project
+# objects, not a wrapped page or a paginated result structure.
 def _request_json(url: str, timeout: float) -> tuple[Any, dict[str, Any]]:
     request = urllib.request.Request(require_http_url(url), headers={"Accept": "application/json", "User-Agent": "hda-cerf/1.0"})
     with open_http(request, timeout=timeout) as response:
@@ -39,6 +47,11 @@ def query(year: int, stdout_records: int = MAX_STDOUT_RECORDS, timeout: float = 
         raise ValueError(f"stdout_records must be an integer between 1 and {MAX_STDOUT_RECORDS}")
     if type(timeout) not in (int, float) or not 0 < timeout < float('inf'):
         raise ValueError("timeout must be positive and finite")
+    # The year is the only data selector. The result identifies the precise
+    # request and CERF interface, counts all response objects, then exposes
+    # only the first N in publisher order; no server-side page is requested.
+    # retrieved_at_utc is HDA retrieval time, not a project/allocation date.
+    # Empty results do not establish CERF-wide absence or coverage.
     parameters = {"year": str(year)}
     source_url = ENDPOINT.format(year=year)
     payload, network = _request_json(source_url, timeout)
@@ -62,6 +75,10 @@ def _stdout_bytes(result: dict[str, Any], limit: int) -> bytes:
     normal = (json.dumps(result, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False) + "\n").encode("utf-8")
     if len(normal) <= limit:
         return normal
+    # If formatted JSON exceeds stdout, replace it with a complete envelope
+    # instead of partial JSON. Keep source/interface, request scope, lineage,
+    # network facts, counts and limit diagnostics; omit project records, the
+    # normal scope note and semantic boundaries. Fail if this cannot fit.
     envelope = {"schema_version": "hda-output-limit-envelope/v1", "source_id": SOURCE_ID, "interface_id": INTERFACE_ID, "request_scope": result["request_scope"], "provenance": {"lineage": result["lineage"], "network": result["network"]}, "counts": {"response_record_count": result["network"]["response_record_count"]}, "stdout_bytes_limit": limit, "normal_serialized_bytes": len(normal), "output_limit_exceeded": True, "data_omitted": True, "reason": "Publisher records/data were omitted because the serialized model-facing stdout limit was exceeded."}
     emitted = (json.dumps(envelope, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False) + "\n").encode("utf-8")
     if len(emitted) > limit:

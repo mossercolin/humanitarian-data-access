@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Discover and query UNHCR Refugee Statistics through a bounded anonymous client."""
 
+# "list" exposes a static local operation catalog; "query" requests live anonymous
+# UNHCR JSON. A query collects a bounded local record window, optionally saves
+# that window to a JSON artifact, and sends a smaller byte-bounded stdout view.
+
 from __future__ import annotations
 
 import argparse
@@ -19,10 +23,12 @@ from typing import Any, Sequence
 from hda_http import open_http, read_limited, remote_json_loads, require_http_url
 
 
+# These source/interface identifiers belong to HDA, not to the publisher.
 SOURCE_ID = "unhcr_refugee_statistics"
 INTERFACE_ID = "unhcr_refugee_stats_v1"
 BASE_URL = "https://api.unhcr.org/population/v1"
 DOCS_URL = "https://api.unhcr.org/docs/refugee-statistics.html"
+# This 16 MiB ceiling applies per HTTP response, not to total page traffic.
 API_RESPONSE_LIMIT = 16 * 1024 * 1024
 OPERATIONS = (
     "asylum-applications", "asylum-decisions", "countries", "demographics",
@@ -31,6 +37,7 @@ OPERATIONS = (
 )
 DEFAULT_MAX_RECORDS = 100
 DEFAULT_STDOUT_RECORDS = 5
+# 256 KiB is both the CLI default and minimum serialized stdout-byte allowance.
 DEFAULT_STDOUT_BYTES_LIMIT = 256 * 1024
 MAX_RECORDS = 10_000
 PARAMETER_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_\[\]]*$")
@@ -57,6 +64,9 @@ def _request_json(url: str, timeout: float) -> tuple[Any, dict[str, Any]]:
         raise ValueError(f"server returned invalid JSON ({facts})") from exc
 
 
+# This locally declared, documentation-derived catalog lists 12 supported
+# operations. "list" does not contact UNHCR or establish current operation,
+# parameter, schema, authentication, or service availability.
 def discover() -> dict[str, Any]:
     return {
         "schema_version": "hda-unhcr-surface/v1",
@@ -71,6 +81,10 @@ def discover() -> dict[str, Any]:
     }
 
 
+# Check NAME=VALUE syntax, case-sensitive parameter names, duplicates, and
+# reserved controls only. Native values pass through without validating source
+# support or humanitarian meaning. Query sets limit/page; download is blocked,
+# not an implemented CSV download operation.
 def _parse_params(values: Sequence[str]) -> list[tuple[str, str]]:
     result: list[tuple[str, str]] = []
     seen = set()
@@ -89,12 +103,17 @@ def _parse_params(values: Sequence[str]) -> list[tuple[str, str]]:
     return result
 
 
+# The expected JSON shape is an object with an "items" list. Other shapes
+# fail; native list entries are retained without item/field validation.
 def _records(payload: Any) -> list[Any]:
     if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
         raise ValueError("UNHCR response has no items list")
     return payload["items"]
 
 
+# By default refuse an existing destination; --force permits replacement.
+# Write to a temporary file in the same directory, then replace the target.
+# These existence checks do not guarantee race-free exclusive creation.
 def _write_json(path: pathlib.Path, payload: Any, force: bool = False) -> str:
     path = path.resolve()
     if path.exists() and not force:
@@ -112,6 +131,9 @@ def _write_json(path: pathlib.Path, payload: Any, force: bool = False) -> str:
     return str(path)
 
 
+# Collect a local window of native items, not a verified complete source set.
+# Page/limit semantics have not been independently established; consecutive
+# requests are not guaranteed to yield contiguous or non-overlapping items.
 def query(operation: str, parameters: list[tuple[str, str]], start_page: int, page_size: int,
           max_records: int, stdout_records: int, output: pathlib.Path | None,
           timeout: float, force: bool = False) -> dict[str, Any]:
@@ -119,6 +141,8 @@ def query(operation: str, parameters: list[tuple[str, str]], start_page: int, pa
         raise FileExistsError(f"output already exists: {output}; use --force to replace it")
     if operation not in OPERATIONS:
         raise ValueError(f"unknown operation {operation!r}; run 'hda_unhcr.py list'")
+    # Capture client retrieval time before the first request, not UNHCR's
+    # publication or observation time and not a data-freshness assertion.
     retrieved_at = _timestamp()
     records: list[Any] = []
     page = start_page
@@ -126,6 +150,8 @@ def query(operation: str, parameters: list[tuple[str, str]], start_page: int, pa
     network: list[dict[str, Any]] = []
     max_pages: int | None = None
     endpoint_url = f"{BASE_URL}/{operation}/"
+    # Numbering begins at the caller's start_page (CLI default 1); the final
+    # requested limit shrinks to the remaining local record allowance.
     while len(records) < max_records:
         requested = min(page_size, max_records - len(records))
         query_params = [*parameters, ("limit", str(requested)), ("page", str(page))]
@@ -137,9 +163,14 @@ def query(operation: str, parameters: list[tuple[str, str]], start_page: int, pa
         network.append({**facts, "page": page, "requested_limit": requested, "returned_items": len(batch)})
         raw_max_pages = payload.get("maxPages")
         max_pages = raw_max_pages if isinstance(raw_max_pages, int) else max_pages
+        # Stop after a short/empty page or source-reported integer maxPages;
+        # the loop also stops at max_records. Neither proves source exhaustion.
         if len(batch) < requested or (max_pages is not None and page >= max_pages):
             break
         page += 1
+    # Keep only up to each requested limit, even if a response supplied more.
+    # Request facts and HDA lineage trace acquisition, not refugee-status
+    # definitions, demographic comparability, or humanitarian claim validity.
     complete = {
         "schema_version": "hda-unhcr-result/v1",
         "source_id": SOURCE_ID,
@@ -150,7 +181,11 @@ def query(operation: str, parameters: list[tuple[str, str]], start_page: int, pa
         "network": {"anonymous": True, "requests": network, "pages_retrieved": pages_retrieved, "records_retrieved": len(records), "reported_max_pages": max_pages},
         "records": records,
     }
+    # Only --output persists this entire locally retained window, with its
+    # request-level network facts; failed page requests do not yield a result.
     artifact_path = _write_json(output, complete, force) if output else None
+    # Stdout previews at most stdout_records items (CLI default 5). Counters
+    # describe this planned preview BEFORE possible byte-limit fallback.
     return {
         **{key: complete[key] for key in ("schema_version", "source_id", "interface_id", "operation", "request_scope", "lineage", "network")},
         "result": {"returned_count": len(records), "returned_to_stdout": min(len(records), stdout_records), "truncated_for_stdout": len(records) > stdout_records, "complete_result_artifact": artifact_path, "records": records[:stdout_records]},
@@ -172,6 +207,10 @@ def _stdout_bytes_limit(value: str) -> int:
     return result
 
 
+# Serialize the preview first. On byte overflow, the fallback omits records,
+# per-request network facts, and diagnostics, but keeps pre-fallback counters.
+# Without --output those omitted records have no saved artifact from this run;
+# if even the fallback exceeds the ceiling, output fails.
 def _query_stdout_bytes(result: dict[str, Any], limit: int) -> bytes:
     normal = (json.dumps(result, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")
     if len(normal) <= limit:
@@ -223,6 +262,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "list":
             result = discover()
         else:
+            # The 10,000-record ceiling is enforced at the CLI entry point,
+            # not independently by direct calls to query().
             if args.max_records > MAX_RECORDS:
                 raise ValueError(f"max records cannot exceed {MAX_RECORDS}")
             result = query(args.operation.strip("/"), _parse_params(args.param), args.start_page, args.page_size, args.max_records, args.stdout_records, args.output, args.timeout, args.force)

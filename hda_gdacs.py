@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
 """Discover and query GDACS through its bounded anonymous REST interface."""
+# `list` fetches live Swagger and summarizes eligible public GET paths.
+# `query` fetches Swagger again, makes a separate data GET, and then selects
+# local record windows for stdout; it does not interpret humanitarian meaning.
+# An optional file stores the complete parsed response from that one data GET.
+# Serialized stdout has a separate byte ceiling and may omit details entirely.
 
 from __future__ import annotations
 
@@ -33,6 +38,10 @@ def _timestamp() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+# The shared HTTP helper enforces a 16 MiB body-read ceiling for each response:
+# both the Swagger fetch and the later data fetch, not their combined transfer.
+# Status, content type, read byte count and final URL are observed HTTP facts;
+# invalid JSON raises an error carrying those response facts.
 def _request_json(url: str, timeout: float) -> tuple[Any, dict[str, Any]]:
     request = urllib.request.Request(require_http_url(url), headers={"Accept": "application/json", "User-Agent": USER_AGENT})
     with open_http(request, timeout=timeout) as response:
@@ -44,6 +53,8 @@ def _request_json(url: str, timeout: float) -> tuple[Any, dict[str, Any]]:
         raise ValueError(f"server returned invalid JSON ({facts})") from exc
 
 
+# Retrieve the fixed live Swagger URL; only a top-level `paths` object is
+# required. This is not full OpenAPI/Swagger reference resolution.
 def _swagger(timeout: float) -> dict[str, Any]:
     payload, _ = _request_json(SWAGGER_URL, timeout)
     if not isinstance(payload, dict) or not isinstance(payload.get("paths"), dict):
@@ -51,6 +62,8 @@ def _swagger(timeout: float) -> dict[str, Any]:
     return payload
 
 
+# Select directly declared GET operations under /api/ (case-insensitive prefix).
+# Referenced path items and other HTTP methods are not followed or selected.
 def _operations(spec: dict[str, Any]) -> dict[str, dict[str, Any]]:
     result = {}
     for path, item in spec["paths"].items():
@@ -60,6 +73,11 @@ def _operations(spec: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return result
 
 
+# Report only directly declared operation-level parameter names, required
+# flags and primitive types. Path-level parameters and `$ref` entries are not
+# resolved; unresolved references may appear with null parameter fields.
+# Endpoint details/count come from live Swagger, whereas HDA identity, base
+# URL, docs URL and the anonymous-access claim are locally declared.
 def discover(timeout: float) -> dict[str, Any]:
     spec = _swagger(timeout)
     endpoints = []
@@ -72,6 +90,7 @@ def discover(timeout: float) -> dict[str, Any]:
     return {"schema_version": "hda-gdacs-surface/v1", "source_id": SOURCE_ID, "interface_id": INTERFACE_ID, "base_endpoint": f"{BASE_URL}/api/", "official_docs": DOCS_URL, "swagger_url": SWAGGER_URL, "authentication": {"required": False, "class": "public anonymous"}, "endpoint_count": len(endpoints), "endpoints": endpoints}
 
 
+# CLI parameters must be NAME=VALUE with a nonempty, nonrepeated name.
 def _parse_params(values: Sequence[str]) -> dict[str, str]:
     result = {}
     for value in values:
@@ -84,6 +103,10 @@ def _parse_params(values: Sequence[str]) -> dict[str, str]:
     return result
 
 
+# Convert direct declared integer, number and boolean types only; other
+# values remain text. No enum, format, range or humanitarian filter validation.
+# URL encoding later stringifies these values: e.g. true -> True, 5 as a
+# `number` -> 5.0; this is not publisher-preferred syntax normalization.
 def _coerce(value: str, definition: dict[str, Any]) -> Any:
     schema = definition.get("schema") if isinstance(definition.get("schema"), dict) else {}
     kind = schema.get("type") or definition.get("type")
@@ -95,6 +118,8 @@ def _coerce(value: str, definition: dict[str, Any]) -> Any:
     return value
 
 
+# Mechanically choose `features` list before `data` list, then a root list;
+# any other JSON value (including other wrapper objects) is one record.
 def _records(payload: Any) -> tuple[list[Any], str]:
     if isinstance(payload, dict) and isinstance(payload.get("features"), list): return payload["features"], "features"
     if isinstance(payload, dict) and isinstance(payload.get("data"), list): return payload["data"], "data"
@@ -102,6 +127,8 @@ def _records(payload: Any) -> tuple[list[Any], str]:
     return [payload], "single_object"
 
 
+# Save the full parsed response for this request, re-serialized as JSON,
+# not original HTTP bytes. The artifact does not include HDA result lineage.
 def _write_json(path: pathlib.Path, payload: Any, force: bool = False) -> str:
     if path.exists() and not force: raise FileExistsError(f"output already exists: {path}; use --force to replace it")
     path = path.resolve(); path.parent.mkdir(parents=True, exist_ok=True)
@@ -115,6 +142,13 @@ def _write_json(path: pathlib.Path, payload: Any, force: bool = False) -> str:
     return str(path)
 
 
+# Each query re-fetches live Swagger before its separate data request;
+# the Swagger fetch's response facts are not retained in the query result.
+# Only direct, named operation-level parameters are checked for unknown or
+# missing-required names. Path-level and `$ref` declarations are not enforced.
+# All provided parameters go into the query string; path templates remain
+# literal, and the endpoint host/base are locally fixed rather than read
+# from Swagger. GDACS decides whether the resulting request is acceptable.
 def query(endpoint: str, raw_params: dict[str, str], max_records: int, stdout_records: int,
           output: pathlib.Path | None, timeout: float, force: bool = False) -> dict[str, Any]:
     if output is not None and output.exists() and not force: raise FileExistsError(f"output already exists: {output}; use --force to replace it")
@@ -128,13 +162,26 @@ def query(endpoint: str, raw_params: dict[str, str], max_records: int, stdout_re
     params = {name: _coerce(value, definitions[name]) for name, value in raw_params.items()}
     endpoint_url = f"{BASE_URL}/{operations[endpoint]['path'].lstrip('/')}"
     source_url = endpoint_url + ("?" + urllib.parse.urlencode(params) if params else "")
+    # Local clock sampled BEFORE the data GET, not a publisher publication time.
     retrieved_at = _timestamp()
     payload, facts = _request_json(source_url, timeout)
+    # The complete bounded data response is read and parsed before any local
+    # `max_records` or `stdout_records` selection; neither limits remote size.
     all_records, envelope = _records(payload)
     selected = all_records[:max_records]
     artifact_path = _write_json(output, payload, force) if output else None
     page_size = next((int(v) for k, v in params.items() if k.lower() == "pagesize"), None)
     page_number = next((int(v) for k, v in params.items() if k.lower() == "pagenumber"), None)
+    # Counts describe this received response, not all GDACS data. The local
+    # selected count can exceed the proposed stdout record count; byte-limit
+    # fallback may subsequently emit zero records without revising counters.
+    # `truncated_for_stdout` also reports trimming by `max_records`.
+    # `may_have_more` is true only with supplied `pagesize` and at least that
+    # many received records; false cannot establish source completeness.
+    # There is no automatic pagination or inferred humanitarian comparability.
+    # `network` mixes observed HTTP facts, locally derived counts/page hints,
+    # and the locally asserted `anonymous` flag. `source_url` is the constructed
+    # request URL; `final_response_url` is the URL after any redirects.
     return {
         "schema_version": "hda-gdacs-result/v1", "source_id": SOURCE_ID, "interface_id": INTERFACE_ID, "operation": endpoint,
         "request_scope": {"parameters": params, "max_records": max_records},
@@ -145,6 +192,13 @@ def query(endpoint: str, raw_params: dict[str, str], max_records: int, stdout_re
     }
 
 
+# First serialize normal output. If it exceeds the stdout byte ceiling,
+# replace it wholesale: `list` omits endpoints; `query` omits records.
+# The alternate envelope also drops normal diagnostics and changes schema
+# version. Preserved counts/flags describe the normal candidate, NOT records
+# actually emitted by fallback (`data_omitted` marks that omission).
+# If even the fallback exceeds the ceiling, fail without writing to stdout;
+# an optional data artifact may already have been saved by `query`.
 def _stdout_bytes(result: dict[str, Any], command: str, limit: int) -> bytes:
     def serialize(value: dict[str, Any]) -> bytes:
         return (json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")

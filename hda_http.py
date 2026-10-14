@@ -36,6 +36,7 @@ import json
 # math.isfinite lets HDA reject floating-point values such as infinity that are
 # technically representable by Python but are not acceptable remote JSON data.
 import math
+import ssl
 
 # URL tools serve two different roles here: urllib.parse separates a remote
 # address into scheme/host/port for trust decisions, while urllib.request opens
@@ -263,7 +264,7 @@ class _TrustedRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 
 def open_http(request: urllib.request.Request | str, timeout: float,
-              allowed_origins: Iterable[str] = ()) -> Any:
+              allowed_origins: Iterable[str] = (), ssl_context: ssl.SSLContext | None = None) -> Any:
     """Open an HTTP(S) request without letting redirects escape reviewed origins.
 
     WHAT: perform the remote HTTP open used by HDA callers.
@@ -286,7 +287,10 @@ def open_http(request: urllib.request.Request | str, timeout: float,
 
     # Phase 2: open the request through the redirect handler. Redirects are
     # therefore checked before urllib follows them.
-    response = urllib.request.build_opener(_TrustedRedirectHandler(origins)).open(request, timeout=timeout)
+    handlers: list[Any] = [_TrustedRedirectHandler(origins)]
+    if ssl_context is not None:
+        handlers.append(urllib.request.HTTPSHandler(context=ssl_context))
+    response = urllib.request.build_opener(*handlers).open(request, timeout=timeout)
 
     # Phase 3: independently inspect where the response actually ended. This is
     # a deliberate defense-in-depth backstop, not a replacement for per-redirect

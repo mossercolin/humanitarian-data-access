@@ -35,6 +35,10 @@ def _request_json(url: str, timeout: float) -> tuple[Any, dict[str, Any]]:
 
 
 def query(country_code: str, page_size: int = 5, offset: int = 0, stdout_records: int = MAX_STDOUT_RECORDS, timeout: float = 30.0) -> dict[str, Any]:
+    # Read one anonymous/public FEWS NET marketpricefacts page. The caller supplies
+    # an uppercase two-letter country code; shape validation does not establish
+    # authoritative country support or publisher coverage. Request fields are fixed
+    # to fields=simple and format=json.
     if not re.fullmatch(r"[A-Z]{2}", country_code):
         raise ValueError("country_code must be a two-letter uppercase country code")
     if not 1 <= page_size <= MAX_PAGE_SIZE:
@@ -48,6 +52,9 @@ def query(country_code: str, page_size: int = 5, offset: int = 0, stdout_records
     parameters = {"country_code": country_code, "page_size": str(page_size), "offset": str(offset), "fields": "simple", "format": "json"}
     source_url = ENDPOINT + "?" + urllib.parse.urlencode(parameters)
     payload, network = _request_json(source_url, timeout)
+    # The expected object has a results array of record objects, preserving native
+    # publisher fields without humanitarian interpretation. A recognizable "no data
+    # found" response is access-scoped; an otherwise valid empty results array succeeds.
     if not isinstance(payload, dict) or not isinstance(payload.get("results"), list):
         # Preserve recognizable publisher negatives as access-scoped errors, not global absence.
         detail = payload.get("detail") if isinstance(payload, dict) else payload
@@ -57,7 +64,12 @@ def query(country_code: str, page_size: int = 5, offset: int = 0, stdout_records
     records = payload["results"]
     if any(not isinstance(record, dict) for record in records):
         raise ValueError("FEWS NET results array contains a non-object record")
+    # page_size and offset select the requested publisher page; len(records) is what
+    # arrived, while stdout_records selects local stdout. Pagination links are not followed.
     shown = min(len(records), stdout_records, page_size)
+    # Request scope, source/interface identity, network observations, and retrieval time
+    # accompany native records. HDA retrieval time is not publisher publication,
+    # observation, or market-price period; a public success or empty page is not global coverage.
     return {
         "schema_version": "hda-fews-result/v1", "source_id": SOURCE_ID, "interface_id": INTERFACE_ID,
         "request_scope": {"endpoint": ENDPOINT, "parameters": parameters, "access_scope": "anonymous/public", "pages_requested": 1},
@@ -69,6 +81,11 @@ def query(country_code: str, page_size: int = 5, offset: int = 0, stdout_records
 
 
 def _stdout_bytes(result: dict[str, Any], limit: int) -> bytes:
+    # Normal output is UTF-8 JSON plus a newline. The HTTP response body has a
+    # 1 MiB limit (DATA_LIMIT); model-facing stdout defaults to 256 KiB
+    # (DEFAULT_STDOUT_BYTES_LIMIT) and may be increased through the CLI.
+    # Oversized serialized stdout becomes a provenance/count envelope without records;
+    # if that envelope also exceeds the stdout limit, fail.
     normal = (json.dumps(result, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False) + "\n").encode("utf-8")
     if len(normal) <= limit:
         return normal

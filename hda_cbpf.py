@@ -24,7 +24,13 @@ MAX_STDOUT_RECORDS = 10
 DEFAULT_STDOUT_BYTES_LIMIT = 256 * 1024
 EMPTY_SCOPE = "This exact CBPF query returned no records."
 
+# One anonymous public CBPF query selects PF Project Summary v4 for a caller-chosen
+# pool fund and allocation-year range. Native JSON records are returned in a
+# bounded model-facing window, alongside request scope and source provenance.
 
+# Retrieve one JSON response and retain the observed HTTP details. The 1 MiB
+# response-body limit bounds data read from the server, independently of the
+# separate byte ceiling applied later to model-facing stdout.
 def _request_json(url: str, timeout: float) -> tuple[Any, dict[str, Any]]:
     request = urllib.request.Request(require_http_url(url), headers={"Accept": "application/json", "User-Agent": "hda-cbpf/1.0"})
     with open_http(request, timeout=timeout) as response:
@@ -47,6 +53,9 @@ def query(pool_fund: str, allocation_years: str, stdout_records: int = MAX_STDOU
         raise ValueError(f"stdout_records must be an integer between 1 and {MAX_STDOUT_RECORDS}")
     if type(timeout) not in (int, float) or not 0 < timeout < float('inf'):
         raise ValueError("timeout must be positive and finite")
+    # The caller selects PoolfundCodeAbbrv and AllocationYears; SPCode,
+    # ShowAllPooledFunds and FundTypeId are fixed for this operation. URL encoding
+    # places all five values into the request query string.
     parameters = {"SPCode": "PF_PROJ_SUMMARY_V4", "PoolfundCodeAbbrv": pool_fund, "ShowAllPooledFunds": "0", "AllocationYears": allocation_years, "FundTypeId": "1"}
     source_url = ENDPOINT + "?" + urllib.parse.urlencode(parameters)
     payload, network = _request_json(source_url, timeout)
@@ -54,6 +63,10 @@ def query(pool_fund: str, allocation_years: str, stdout_records: int = MAX_STDOU
         raise ValueError("CBPF projects response must be a top-level array")
     if any(not isinstance(record, dict) for record in payload):
         raise ValueError("CBPF projects array contains a non-object project")
+    # The required top-level array contains source-native JSON objects; their
+    # decoded fields are kept without reinterpretation. Counts describe this
+    # response, not global coverage; zero records are scoped to this query.
+    # The UTC retrieval timestamp records access, not project/allocation time.
     records = payload
     shown = min(len(records), stdout_records)
     return {
@@ -67,6 +80,9 @@ def query(pool_fund: str, allocation_years: str, stdout_records: int = MAX_STDOU
     }
 
 
+# Serialize as UTF-8 JSON before checking the configurable stdout-byte ceiling.
+# If normal output is too large, emit only a metadata/provenance envelope and
+# omit records; fail if even that smaller envelope exceeds the ceiling.
 def _stdout_bytes(result: dict[str, Any], limit: int) -> bytes:
     normal = (json.dumps(result, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False) + "\n").encode("utf-8")
     if len(normal) <= limit:

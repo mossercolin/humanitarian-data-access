@@ -14,6 +14,11 @@ from typing import Any, Sequence
 
 from hda_http import open_http, read_limited, remote_json_loads, require_http_url
 
+# This client exposes one anonymous IFRC GO v2 event-listing page.
+# Source/interface identities and URLs are local declarations, not API data.
+# Four separate limits: 1 MiB HTTP body; local request limit at most 1000
+# (not a verified publisher maximum); at most 10 stdout records; and
+# serialized stdout defaulting to 256 KiB, configurable upward only.
 SOURCE_ID = "ifrc_go"
 INTERFACE_ID = "ifrc_go_public"
 ENDPOINT = "https://goadmin.ifrc.org/api/v2/event/"
@@ -26,6 +31,8 @@ EMPTY_SCOPE = "No records returned under the current IFRC GO public access scope
 
 
 def _request_json(url: str, timeout: float) -> tuple[Any, dict[str, Any]]:
+    # Issue an anonymous JSON GET; bound the response body before parsing.
+    # Network observations describe this response, including bytes and final URL.
     request = urllib.request.Request(require_http_url(url), headers={"Accept": "application/json", "User-Agent": "hda-ifrc-go/1.0"})
     with open_http(request, timeout=timeout) as response:
         body = read_limited(response, DATA_LIMIT, "IFRC GO event response", response.headers)
@@ -42,6 +49,8 @@ def query(limit: int = 50, offset: int = 0, stdout_records: int = MAX_STDOUT_REC
         raise ValueError(f"stdout_records must be an integer between 1 and {MAX_STDOUT_RECORDS}")
     if not 0 < timeout < float('inf'):
         raise ValueError("timeout must be positive and finite")
+    # limit/offset go to IFRC GO; stdout_records controls only local display.
+    # The publisher returns one results page plus count/next/previous metadata.
     parameters = {"limit": str(limit), "offset": str(offset)}
     source_url = ENDPOINT + "?" + urllib.parse.urlencode(parameters)
     payload, network = _request_json(source_url, timeout)
@@ -54,7 +63,11 @@ def query(limit: int = 50, offset: int = 0, stdout_records: int = MAX_STDOUT_REC
     records = payload["results"]
     if any(not isinstance(record, dict) for record in records):
         raise ValueError("IFRC GO results array contains a non-object record")
+    # Never follow next; retain the first selected records with native values.
     shown = min(len(records), stdout_records, limit)
+    # Report request scope separately from response/pagination facts and lineage.
+    # Retrieval time is not event, publication, or collection time. An empty
+    # page establishes only absence within this anonymous single-page request.
     return {
         "schema_version": "hda-ifrc-go-result/v1", "source_id": SOURCE_ID, "interface_id": INTERFACE_ID,
         "request_scope": {"endpoint": ENDPOINT, "parameters": parameters, "access_scope": "anonymous/public", "pages_requested": 1},
@@ -66,6 +79,10 @@ def query(limit: int = 50, offset: int = 0, stdout_records: int = MAX_STDOUT_REC
 
 
 def _stdout_bytes(result: dict[str, Any], limit: int) -> bytes:
+    # Serialize selected output as UTF-8 JSON under the configured byte ceiling.
+    # On overflow, retain scope, lineage, network facts and response count,
+    # but omit records, result metadata and semantic-boundary notes. If that
+    # smaller envelope also exceeds the ceiling, fail rather than truncate.
     normal = (json.dumps(result, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False) + "\n").encode("utf-8")
     if len(normal) <= limit:
         return normal

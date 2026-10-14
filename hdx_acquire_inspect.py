@@ -147,7 +147,7 @@ def _validate_inspection_request(
 
 
 def _declared_content_length(headers: Mapping[str, str] | None) -> int | None:
-    """Interpret Content-Length like  usable non-negative integer or unknown.
+    """Interpret Content-Length as a usable non-negative integer or unknown.
 
     The declaration is only an advisory early/completion signal. Actual counted
     response bytes remain the authoritative size boundary.
@@ -298,7 +298,7 @@ def disposable_inspect(
 
     Validation happens before HTTP I/O. The response body is read only through
     the requested prefix plus one detection byte. When EOF is observed inside
-    that boundary, the implementation's completion check also refuses a body shorter than a
+    that boundary, the completion check also refuses a body shorter than a
     usable Content-Length declaration.
     """
     _validate_inspection_request(declared_format, byte_limit, sample_rows, csv_field_size_limit)

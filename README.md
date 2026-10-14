@@ -1,6 +1,6 @@
 # HDA — Humanitarian Data Access
 
-Current release: **v0.3.2**.
+Current published release: **v0.4.0**.
 
 HDA is agent-oriented, scoped, traceable access to public/open humanitarian and
 relevant contextual data. It is structured-first, not structured-only: it
@@ -26,8 +26,8 @@ HDA is licensed under the Apache License 2.0; see `LICENSE`.
 
 ## Development provenance
 
-HDA is 100% vibe-coded and human-guided by a humanitarian practitioner with
-field and global humanitarian experience.
+HDA is AI-assisted and human-guided by a humanitarian practitioner with field
+and global humanitarian experience.
 
 ## Requirements
 
@@ -37,8 +37,7 @@ field and global humanitarian experience.
 - A skill-capable agent environment is optional and required only for
   Skill-driven routing.
 
-The product directory may be placed anywhere. Run commands directly from its
-root; no fixed installation path is required.
+The product directory may be placed anywhere. Configure `HDA_ROOT` in the consumer execution environment to its absolute root; HDA commands and the registry resolve from that pointer.
 
 ## Commands
 
@@ -81,6 +80,17 @@ root; no fixed installation path is required.
 classes, and known constraints. It is the authoritative source-availability
 surface.
 
+## Source-code narratability
+
+Each runnable Python client explains its purpose, accepted inputs, bounded
+processing flow, output contract, native-source provenance, and operational
+limits alongside the implementation. Read the selected client's module and
+command help before use: a client implements only its stated source route and
+does not imply general coverage of a publisher's data estate. Native records,
+field names, qualifiers, geometries, and declared spatial references are
+preserved where returned; HDA does not silently transform them into a different
+schema, geography, or meaning.
+
 HDA-native structured sources may not fully establish some current
 epidemiological questions. Authoritative document or external fallback may
 still be required; HDA makes no claim of comprehensive epidemiological
@@ -94,14 +104,14 @@ outputs never replace an existing destination by default. Use `--force` only
 when deliberate replacement is intended; HDX acquisition applies the decision
 to both the acquired bytes and their `.acquisition.json` sidecar.
 
-Remote inputs and redirects are restricted to HTTP(S). API response bodies are
-bounded by each client (16 MiB for the established API clients; 1 MiB for
-the five clients added in v0.3.0). HDX acquisition defaults to 64 MiB; disposable inspection to
-1,000,000 bytes; local inspection and local query inputs to 64 MiB; COD-AB
-archives to 256 MiB; and the selected decompressed GeoJSON member to 512 MiB.
-CSV fields have a finite default parser limit of 1 MiB. The relevant CLI limit
-option may be increased deliberately for an expected larger input; record and
-pagination ceilings remain enforced by each source command.
+Remote inputs and redirects are restricted to HTTP(S). Limits are client-
+and operation-specific, not a universal API response-size ceiling. Remote
+response bodies, durable downloads, disposable inspection, local inputs,
+compressed archives, decompressed members, and record/page windows have
+distinct boundaries where supported. Model-facing stdout is bounded
+independently; a small output does not imply a small network transfer.
+Consult the applicable command's options before deliberately raising a limit.
+Neither bounded output nor a scoped query establishes source-wide coverage.
 
 Where the bounded stdout contract applies, the normal minimum/default is
 256 KiB (262144 bytes). An `hda-output-limit-envelope/v1` response is a
@@ -117,16 +127,21 @@ See `CHANGELOG.md` for release history.
 
 ## Expose the agent Skill
 
-The canonical Skill source is
-`skill/humanitarian-data-access/SKILL.md`. Copy it into the recipient agent's
-skill directory according to that environment's skill-discovery convention.
-For an OpenClaw workspace:
+The canonical Skill source is `$HDA_ROOT/skill/humanitarian-data-access/SKILL.md`.
+Set `HDA_ROOT` in the consumer execution environment to the absolute HDA product
+root, then expose that repository-owned Skill through the recipient's ordinary
+skill-discovery location. For an OpenClaw workspace:
 
 ```sh
-mkdir -p "$OPENCLAW_WORKSPACE/skills/humanitarian-data-access"
-cp skill/humanitarian-data-access/SKILL.md \
-  "$OPENCLAW_WORKSPACE/skills/humanitarian-data-access/SKILL.md"
+export HDA_ROOT=/absolute/path/to/HDA
+mkdir -p "$OPENCLAW_WORKSPACE/skills"
+ln -s "$HDA_ROOT/skill/humanitarian-data-access" \
+  "$OPENCLAW_WORKSPACE/skills/humanitarian-data-access"
 ```
+
+The CLI and registry are always `$HDA_ROOT/hda_unfpa_arcgis.py` (and the other
+HDA commands) and `$HDA_ROOT/source_registry.json`; do not substitute another
+checkout.
 
 Credentials, when an interface requires them, belong in external deployment
 state. HDA ships registry descriptions of credential requirements, not actual

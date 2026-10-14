@@ -16,6 +16,8 @@ from typing import Any, Mapping, Sequence
 from hda_http import open_http, read_limited, remote_json_loads, require_http_url
 
 
+# One anonymous query interface for WHO Disease Outbreak News. These IDs and
+# endpoint are HDA configuration; outbreak-news records come from WHO.
 SOURCE_ID = "who_disease_outbreak_news"
 INTERFACE_ID = "who_don_odata_public"
 ENDPOINT = "https://www.who.int/api/hubs/diseaseoutbreaknews"
@@ -33,6 +35,8 @@ def _timestamp() -> str:
 
 
 def _request_json(parameters: Mapping[str, str], timeout: float) -> tuple[dict[str, Any], dict[str, Any], str]:
+    # Caller-chosen native OData parameters are URL-encoded into one request.
+    # The response body is limited to DATA_LIMIT (2 MiB); no next page is fetched.
     source_url = ENDPOINT + "?" + urllib.parse.urlencode(parameters)
     request = urllib.request.Request(
         require_http_url(source_url),
@@ -88,12 +92,19 @@ def query(
         parameters["$orderby"] = order_expression
     parameters.update({"$top": str(top), "$skip": str(skip), "$count": "true"})
     payload, data_network, source_url = _request_json(parameters, timeout)
+    # WHO supplies news records in the native "value" array. Selected fields,
+    # including HTML and regionscountries when supplied, remain unaltered.
+    # This page alone is read; stdout_records bounds the normal result window.
+    # HDA does not interpret narratives or independently verify outbreak claims.
     records = payload.get("value")
     if not isinstance(records, list):
         raise ValueError("WHO DON OData response lacks the native value record array")
     if any(not isinstance(record, dict) for record in records):
         raise ValueError("WHO DON OData value array contains a non-object record")
     shown = min(len(records), stdout_records)
+    # Retrieval time is not publication or outbreak-observation time. The
+    # response count covers this page; odata_count is publisher-supplied.
+    # A nextLink is reported but not followed; empty means empty for this query.
     return {
         "schema_version": "hda-who-don-result/v1",
         "source_id": SOURCE_ID,
@@ -140,6 +151,10 @@ def _nonnegative(value: str) -> int:
 
 
 def _stdout_bytes(result: dict[str, Any], limit: int) -> bytes:
+    # Serialized stdout has its own 256 KiB default, separate from network bytes.
+    # On overflow the envelope keeps identity, scope, provenance and counts,
+    # but omits every publisher record and the normal semantic_boundary fields.
+    # If the envelope itself exceeds the ceiling, the operation fails.
     normal = (json.dumps(result, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False) + "\n").encode("utf-8")
     if len(normal) <= limit:
         return normal

@@ -7,6 +7,7 @@ import argparse
 import html
 import json
 import re
+import ssl
 import sys
 import urllib.error
 import urllib.parse
@@ -34,16 +35,25 @@ MAX_QUERY_RECORDS = 100
 MAX_STDOUT_RECORDS = 10
 DEFAULT_STDOUT_BYTES_LIMIT = 256 * 1024
 USER_AGENT = "hda-unfpa-arcgis/1.0"
-PROOF_FIELDS = (
+NATIVE_OUTPUT_FIELDS = (
     "objectid", "geography_name", "country", "m49_code", "region_name",
     "region_view_code", "year", "source_code", "source_description", "value",
 )
-PROOF_WHERE = "country IS NOT NULL AND value IS NOT NULL"
-PROOF_ORDER = "year DESC,objectid ASC"
+DEFAULT_NATIVE_SCOPE = "country IS NOT NULL AND value IS NOT NULL"
+NATIVE_RECORD_ORDER = "year DESC,objectid ASC"
 
 
 def _timestamp() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _unfpa_ssl_context() -> ssl.SSLContext:
+    """Use normal verification while accommodating UNFPA's non-strict certificate chain."""
+    context = ssl.create_default_context()
+    context.verify_flags &= ~ssl.VERIFY_X509_STRICT
+    if context.verify_mode != ssl.CERT_REQUIRED or not context.check_hostname:
+        raise RuntimeError("UNFPA TLS context must retain certificate and hostname verification")
+    return context
 
 
 def _request_json(url: str, parameters: Mapping[str, str], limit: int, operation: str,
@@ -53,7 +63,7 @@ def _request_json(url: str, parameters: Mapping[str, str], limit: int, operation
         require_http_url(source_url),
         headers={"Accept": "application/json", "User-Agent": USER_AGENT},
     )
-    with open_http(request, timeout=timeout) as response:
+    with open_http(request, timeout=timeout, ssl_context=_unfpa_ssl_context()) as response:
         body = read_limited(response, limit, operation, response.headers)
         network = {
             "http_status": response.status,
@@ -107,7 +117,7 @@ def _inspect(metadata: Mapping[str, Any]) -> dict[str, Any]:
     fields = layer.get("fields")
     advanced = layer.get("advancedQueryCapabilities")
     description = _visible_text(service.get("serviceDescription", ""))
-    required = set(PROOF_FIELDS) | {"ld_ranking"}
+    required = set(NATIVE_OUTPUT_FIELDS) | {"ld_ranking"}
     if not isinstance(fields, list):
         raise ValueError("live layer metadata lacks required native maternal mortality fields")
     if not all(isinstance(field, dict) for field in fields):
@@ -133,6 +143,8 @@ def _inspect(metadata: Mapping[str, Any]) -> dict[str, Any]:
         "layer": {"id": layer["id"], "name": layer["name"]},
         "indicator": {
             "name": _section(description, "Short Name"),
+            "definition": _section(description, "Definition"),
+            "full_name": _section(description, "Full Name"),
             "domain": _section(description, "Domain"),
             "sub_domain": _section(description, "Sub-domain"),
         },
@@ -147,6 +159,7 @@ def _inspect(metadata: Mapping[str, Any]) -> dict[str, Any]:
             {key: field.get(key) for key in ("name", "alias", "type", "nullable")}
             for field in fields
         ],
+        "geometry": {"type": layer.get("geometryType"), "spatial_reference": layer.get("spatialReference")},
         "time": {
             "service_description_availability": _section(description, "Time Dimension Availability"),
             "layer_time_info": layer.get("timeInfo"),
@@ -169,8 +182,29 @@ def discover(timeout: float) -> dict[str, Any]:
     }
 
 
+def _selector_where(country: str | None, m49_code: str | None, year: str | None,
+                    geography_name: str | None = None) -> str:
+    clauses = []
+    for field, value in (("country", country), ("geography_name", geography_name)):
+        if value is not None:
+            if (not isinstance(value, str) or not value.strip() or len(value) > 255
+                    or any(ord(char) < 32 or ord(char) == 127 for char in value)):
+                raise ValueError(f"{field} must be nonblank text of at most 255 characters without controls")
+            clauses.append(field + " = '" + value.replace("'", "''") + "'")
+    for name, value, pattern in (("m49_code", m49_code, r"[0-9]{1,3}"),
+                                 ("year", year, r"[0-9]{4}")):
+        if value is not None:
+            if not isinstance(value, str) or re.fullmatch(pattern, value) is None:
+                raise ValueError(f"{name} must be an exact native string matching {pattern}")
+            clauses.append(f"{name} = '{value}'")
+    return " AND ".join(clauses) if clauses else DEFAULT_NATIVE_SCOPE
+
+
 def query(result_offset: int, result_record_count: int, stdout_records: int,
-          timeout: float) -> dict[str, Any]:
+          timeout: float, *, country: str | None = None, m49_code: str | None = None,
+          year: str | None = None, geography_name: str | None = None,
+          include_geometry: bool = False) -> dict[str, Any]:
+    where = _selector_where(country, m49_code, year, geography_name)
     if result_offset < 0:
         raise ValueError("result offset must be non-negative")
     if result_record_count < 1 or result_record_count > MAX_QUERY_RECORDS:
@@ -179,16 +213,21 @@ def query(result_offset: int, result_record_count: int, stdout_records: int,
         raise ValueError(f"stdout records must be between 1 and {MAX_STDOUT_RECORDS}")
     metadata, metadata_network, metadata_urls = _metadata(timeout)
     inspection = _inspect(metadata)
+    field_types = {field["name"]: field["type"] for field in inspection["fields"]}
+    for name, selector in (("country", country), ("m49_code", m49_code), ("year", year),
+                           ("geography_name", geography_name)):
+        if selector is not None and field_types.get(name) != "esriFieldTypeString":
+            raise ValueError(f"live {name} field no longer supports the pinned string selector")
     advanced = inspection["advanced_query_capabilities"]
     if not advanced["supportsPagination"] or not advanced["supportsOrderBy"]:
         raise ValueError("live layer no longer supports the pinned pagination and ordering mechanics")
     parameters = {
-        "where": PROOF_WHERE,
-        "outFields": ",".join(PROOF_FIELDS),
+        "where": where,
+        "outFields": ",".join(NATIVE_OUTPUT_FIELDS),
         "resultOffset": str(result_offset),
         "resultRecordCount": str(result_record_count),
-        "orderByFields": PROOF_ORDER,
-        "returnGeometry": "false",
+        "orderByFields": NATIVE_RECORD_ORDER,
+        "returnGeometry": "true" if include_geometry else "false",
         "f": "json",
     }
     payload, data_network, source_url = _request_json(
@@ -204,12 +243,14 @@ def query(result_offset: int, result_record_count: int, stdout_records: int,
             raise ValueError("UNFPA layer query returned a feature without native attributes")
         if attributes.get("value") is None:
             raise ValueError("UNFPA layer query returned a null observation value")
-        records.append(attributes)
+        records.append({"attributes": attributes, "geometry": feature.get("geometry")}
+                       if include_geometry else attributes)
     shown = min(len(records), stdout_records)
     return {
         "schema_version": "hda-unfpa-arcgis-result/v1",
         "source_id": SOURCE_ID,
         "interface_id": INTERFACE_ID,
+        "indicator": inspection["indicator"],
         "request_scope": {"host": HOST, "service_path": SERVICE_PATH, "layer_id": LAYER_ID,
                           "query_parameters": parameters},
         "lineage": {"source": "UNFPA Population Data Portal", "feature_server": FEATURE_SERVER,
@@ -219,6 +260,10 @@ def query(result_offset: int, result_record_count: int, stdout_records: int,
                     "publisher_max_record_count": inspection["max_record_count"],
                     "response_feature_count": len(records),
                     "exceeded_transfer_limit": payload.get("exceededTransferLimit")},
+        "geometry": {"requested": include_geometry, "publisher_geometry_type": inspection["geometry"]["type"],
+                     "publisher_spatial_reference": inspection["geometry"]["spatial_reference"],
+                     "response_spatial_reference": payload.get("spatialReference"),
+                     "note": "Geometry is publisher-native when present; HDA does not validate it, transform it, or establish administrative-boundary authority."},
         "result": {"returned_to_stdout": shown, "truncated_for_stdout": len(records) > shown,
                    "records": records[:shown]},
         "semantic_boundary": [
@@ -256,6 +301,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("discover", help="inspect the pinned UNFPA FeatureServer and layer metadata")
     q = sub.add_parser("query", help="run the bounded maternal mortality JSON query")
+    q.add_argument("--country", help="exact publisher-native country name (no alias lookup)")
+    q.add_argument("--m49-code", help="exact native M49 string, 1–3 ASCII digits; no zero-padding")
+    q.add_argument("--year", help="exact four-digit native year string; no ranges or ArcGIS time conversion")
+    q.add_argument("--geography-name", help="exact publisher-native geography name; no alias lookup")
+    q.add_argument("--include-geometry", action="store_true", help="return publisher-native geometry explicitly")
     q.add_argument("--result-offset", type=_nonnegative, default=0)
     q.add_argument("--result-record-count", type=_positive, default=5)
     q.add_argument("--stdout-records", type=_positive, default=MAX_STDOUT_RECORDS)
@@ -268,7 +318,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.stdout_bytes_limit < DEFAULT_STDOUT_BYTES_LIMIT:
             raise ValueError(f"--stdout-bytes-limit must be at least the default {DEFAULT_STDOUT_BYTES_LIMIT}")
         result = discover(args.timeout) if args.command == "discover" else query(
-            args.result_offset, args.result_record_count, args.stdout_records, args.timeout
+            args.result_offset, args.result_record_count, args.stdout_records, args.timeout,
+            country=args.country, m49_code=args.m49_code, year=args.year,
+            geography_name=args.geography_name, include_geometry=args.include_geometry
         )
         sys.stdout.buffer.write(_stdout_bytes(result, args.stdout_bytes_limit))
         return 0

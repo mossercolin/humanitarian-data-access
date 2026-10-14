@@ -1,25 +1,23 @@
 # Changelog
 
-## v0.3.2 — 2026-09-30
+## v0.4.0
 
-### Core hardening and documentation
+- Expanded client-level source-code explanations covering each command's purpose,
+  inputs, output shape, data flow, source provenance, and operational limits.
+- Added bounded native UNFPA maternal-mortality selectors for country, M49, year, and named geography; arbitrary SQL is not exposed.
+- Kept attributes-only output by default and added explicit publisher-native geometry retrieval with preserved spatial-reference declarations.
+- Documented the single `HDA_ROOT` installation contract for the canonical Skill, clients, and registry.
+- Applied a UNFPA-only TLS strict-mode compatibility adjustment while retaining certificate-chain and hostname verification.
 
-- Substantially improved code narratability and operational documentation in
-  the core HTTP, local-query, and HDX discovery and acquisition tooling.
-- Strengthened HTTP URL, redirect, and response-body boundary handling.
-- Hardened local query validation and numeric, resource, and nested-operation
-  boundaries.
-- Improved HDX discovery response validation and bounded-result semantics.
-- Strengthened HDX acquisition and inspection behavior, including CSV parser
-  state restoration, partial UTF-8 boundary handling, bounded direct-call
-  contracts, rollback of data/sidecar publication, explicit filesystem
-  guarantees, and safer stdout serialization.
+## v0.3.2
 
-### Compatibility and scope
+### Readability, correctness, and bounded I/O
 
-- No new humanitarian source or interface was added in this release.
-- HDA remains Python 3.9+ and standard-library-only, with no new dependency or
-  installation requirement.
+- Improved readability, correctness, and bounded-I/O behavior in the existing
+  HDA product.
+- Improved existing local-query, HDX-discovery, and HDX-acquisition/inspection
+  behavior; these corrections do not establish additional source-wide coverage.
+- This entry covers the v0.3.2 release scope only.
 
 ## v0.3.1 — 2026-09-22
 

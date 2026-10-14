@@ -16,6 +16,8 @@ from typing import Any, Sequence
 from hda_http import open_http, read_limited, remote_json_loads, require_http_url
 
 
+# Local configuration fixes the public mart/object; live $metadata supplies properties,
+# not an alternative target or independently interpreted health indicators.
 SOURCE_ID = "who_whdh_xmart"
 INTERFACE_ID = "who_whdh_xmart_public"
 BASE_URL = "https://xmart-api-public.who.int"
@@ -24,6 +26,9 @@ OBJECT = "VIW_FNT"
 METADATA_URL = f"{BASE_URL}/{MART}/$metadata"
 OBJECT_URL = f"{BASE_URL}/{MART}/{OBJECT}"
 DOCS_URL = "https://extranet.who.int/xmart4/docs/xmart_api/use_API.html"
+# Five separate bounds: metadata bytes (1 MiB), data bytes (1 MiB), requested
+# $top window (max 100), stdout records (max 10), and serialized stdout
+# bytes (default 256 KiB). None implies complete publisher coverage.
 METADATA_LIMIT = 1024 * 1024
 DATA_LIMIT = 1024 * 1024
 MAX_TOP = 100
@@ -45,6 +50,7 @@ def _request(url: str, accept: str, limit: int, operation: str, timeout: float) 
 
 
 def _metadata(timeout: float) -> tuple[ET.Element, dict[str, Any]]:
+    """Fetch bounded live XML metadata; reject known DOCTYPE patterns, then parse."""
     body, network = _request(METADATA_URL, "application/xml", METADATA_LIMIT, "WHO xMart metadata response", timeout)
     try:
         if any(marker in body for marker in DOCTYPE_MARKERS):
@@ -59,6 +65,11 @@ def _local(element: ET.Element) -> str:
 
 
 def _object_schema(root: ET.Element) -> dict[str, Any]:
+    """Find the named EntityType and EntitySet independently, then list direct properties.
+
+    Report the EntitySet's EntityType attribute without verifying its relationship
+    to the separately found EntityType. Names/types come from live metadata.
+    """
     entity = next((item for item in root.iter() if _local(item) == "EntityType" and item.get("Name") == OBJECT), None)
     entity_set = next((item for item in root.iter() if _local(item) == "EntitySet" and item.get("Name") == OBJECT), None)
     if entity is None or entity_set is None:
@@ -70,11 +81,19 @@ def _object_schema(root: ET.Element) -> dict[str, Any]:
 
 
 def discover(timeout: float) -> dict[str, Any]:
+    """Expose live publisher-declared properties with HDA retrieval and network facts."""
     root, network = _metadata(timeout)
     return {"schema_version": "hda-who-xmart-discovery/v1", "source_id": SOURCE_ID, "interface_id": INTERFACE_ID, "source": "WHO World Health Data Hub / xMart", "production_root": BASE_URL, "authentication": {"required": False, "class": "public anonymous"}, "schema": _object_schema(root), "lineage": {"official_docs": DOCS_URL, "metadata_url": METADATA_URL, "retrieved_at_utc": _timestamp()}, "network": network}
 
 
 def query(select: Sequence[str], filter_expression: str, top: int, skip: int, stdout_records: int, timeout: float) -> dict[str, Any]:
+    """Fetch one OData window after checking $select against fresh live properties.
+
+    $filter is publisher-native text, not a locally interpreted humanitarian query.
+    $top requests one bounded window; $skip offsets it without established order
+    or automatic pagination. Require native object records with each selected
+    field present; no records is an error for this exact query scope.
+    """
     root, metadata_network = _metadata(timeout)
     schema = _object_schema(root)
     available = {item["name"] for item in schema["properties"]}
@@ -105,7 +124,10 @@ def query(select: Sequence[str], filter_expression: str, top: int, skip: int, st
         raise ValueError("WHO xMart response record lacks a requested $select field")
     if not records:
         raise ValueError("WHO xMart response contained no records for the exact query scope")
+    # The received value-array count is not a dataset-wide total; stdout gets
+    # only a separate record slice, which may be smaller than the $top window.
     shown = min(len(records), stdout_records)
+    # HDA timestamps retrieval, not WHO publication or observation time.
     return {
         "schema_version": "hda-who-xmart-result/v1", "source_id": SOURCE_ID, "interface_id": INTERFACE_ID,
         "request_scope": {"production_root": BASE_URL, "mart": MART, "object": OBJECT, "odata_query": parameters},
@@ -129,6 +151,12 @@ def _nonnegative(value: str) -> int:
 
 
 def _stdout_bytes(result: dict[str, Any], limit: int) -> bytes:
+    """Enforce serialized UTF-8 stdout bytes, including the trailing newline.
+
+    If normal output is too large, emit scope, provenance, available counts and
+    size/omission diagnostics rather than records or discovery schema. No full
+    artifact is saved; fail if the smaller envelope also exceeds the ceiling.
+    """
     normal = (json.dumps(result, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False) + "\n").encode("utf-8")
     if len(normal) <= limit: return normal
     envelope = {"schema_version": "hda-output-limit-envelope/v1", "source_id": SOURCE_ID, "interface_id": INTERFACE_ID, "request_scope": result.get("request_scope", {"operation": "discover", "resource": f"{MART}/{OBJECT}"}), "provenance": {"lineage": result["lineage"], "network": result["network"]}, "counts": {"response_record_count": result["network"].get("response_record_count")}, "stdout_bytes_limit": limit, "normal_serialized_bytes": len(normal), "output_limit_exceeded": True, "data_omitted": True, "reason": "Publisher records/data were omitted because the serialized model-facing stdout limit was exceeded."}

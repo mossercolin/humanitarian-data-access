@@ -15,10 +15,12 @@ from typing import Any, Sequence
 
 from hda_http import open_http, read_limited, remote_json_loads, require_http_url
 
+# This client exposes one fixed public INFORM Countries/Scores operation.
 SOURCE_ID = "inform"
 INTERFACE_ID = "inform_web_api"
 ENDPOINT = "https://drmkc.jrc.ec.europa.eu/inform-index/API/InformAPI/Countries/Scores/"
 DOCS_URL = "https://drmkc.jrc.ec.europa.eu/inform-index/API/InformAPI/"
+# Bound the network response independently of the record and byte limits on stdout.
 DATA_LIMIT = 1024 * 1024
 MAX_STDOUT_RECORDS = 10
 DEFAULT_STDOUT_BYTES_LIMIT = 256 * 1024
@@ -26,6 +28,8 @@ EMPTY_SCOPE = "This exact INFORM query returned no records."
 
 
 def _request_json(url: str, timeout: float) -> tuple[Any, dict[str, Any]]:
+    # Make one anonymous JSON request; bound the body before JSON decoding.
+    # Capture observed HTTP facts separately from the publisher records.
     request = urllib.request.Request(require_http_url(url), headers={"Accept": "application/json", "User-Agent": "hda-inform/1.0"})
     with open_http(request, timeout=timeout) as response:
         body = read_limited(response, DATA_LIMIT, "INFORM scores response", response.headers)
@@ -34,6 +38,8 @@ def _request_json(url: str, timeout: float) -> tuple[Any, dict[str, Any]]:
 
 
 def query(workflow_id: int, iso3: str, indicator_id: str, stdout_records: int = MAX_STDOUT_RECORDS, timeout: float = 30.0) -> dict[str, Any]:
+    # Callers supply INFORM-native selectors; these checks validate type and
+    # syntax/range, not whether the selected identifiers exist at INFORM.
     if type(workflow_id) is not int or not 1 <= workflow_id <= 2147483647:
         raise ValueError("workflow_id must be a positive native Int32 integer")
     if not isinstance(iso3, str) or re.fullmatch(r"[A-Z]{3}", iso3) is None:
@@ -44,15 +50,22 @@ def query(workflow_id: int, iso3: str, indicator_id: str, stdout_records: int = 
         raise ValueError(f"stdout_records must be an integer between 1 and {MAX_STDOUT_RECORDS}")
     if type(timeout) not in (int, float) or not 0 < timeout < float('inf'):
         raise ValueError("timeout must be positive and finite")
+    # Encode the explicit selectors under the publisher's parameter names.
     parameters = {"WorkflowId": workflow_id, "Iso3": iso3, "IndicatorId": indicator_id}
     source_url = ENDPOINT + "?" + urllib.parse.urlencode(parameters)
     payload, network = _request_json(source_url, timeout)
+    # Expect a top-level array of publisher records, each a JSON object.
     if not isinstance(payload, list):
         raise ValueError("INFORM scores response must be a top-level array")
     if any(not isinstance(record, dict) for record in payload):
         raise ValueError("INFORM scores array contains a non-object record")
     records = payload
+    # Select a stdout record window after receiving the bounded response.
     shown = min(len(records), stdout_records)
+    # Keep request scope, observed network facts and source/retrieval lineage
+    # distinct. WorkflowId selects a workflow, not an API version; the
+    # retrieval time is not a data period. Publisher values keep their
+    # native meaning; empty results concern only these selectors.
     return {
         "schema_version": "hda-inform-result/v1", "source_id": SOURCE_ID, "interface_id": INTERFACE_ID,
         "operation": "Countries/Scores",
@@ -65,6 +78,9 @@ def query(workflow_id: int, iso3: str, indicator_id: str, stdout_records: int = 
 
 
 def _stdout_bytes(result: dict[str, Any], limit: int) -> bytes:
+    # Emit the normal JSON result when its serialized bytes fit the limit.
+    # Otherwise retain identity, scope, lineage, network and record counts,
+    # but omit publisher records and the normal result/semantic_boundary.
     normal = (json.dumps(result, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False) + "\n").encode("utf-8")
     if len(normal) <= limit:
         return normal

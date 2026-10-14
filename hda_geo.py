@@ -20,6 +20,9 @@ from typing import Any, Sequence
 from hda_http import open_http, read_limited, remote_json_loads, require_http_url
 
 
+# Flow: search HDX for one COD-AB dataset, select its GeoJSON ZIP and
+# requested administrative-level member, then preserve native identities
+# and source lineage. Only stdout is byte-bounded; boundary also writes GeoJSON.
 SOURCE_ID = "ocha_cod_ab"
 INTERFACE_ID = "ocha_cod_ab_hdx_geojson"
 CKAN_ACTION = "https://data.humdata.org/api/3/action"
@@ -36,6 +39,7 @@ def _timestamp() -> str:
 
 
 def _request_json(action: str, parameters: dict[str, Any], timeout: float) -> dict[str, Any]:
+    # Each catalog action response has its own fixed 16 MiB byte limit.
     url = f"{CKAN_ACTION}/{action}?{urllib.parse.urlencode(parameters)}"
     request = urllib.request.Request(require_http_url(url), headers={"User-Agent": USER_AGENT})
     with open_http(request, timeout=timeout) as response:
@@ -46,6 +50,8 @@ def _request_json(action: str, parameters: dict[str, Any], timeout: float) -> di
 
 
 def _country_match(dataset: dict[str, Any], query: str) -> bool:
+    # Require the cod-ab- prefix and exact case-folded equality with the
+    # name suffix or a catalog group ID/name/title; no fuzzy matching.
     if not str(dataset.get("name", "")).startswith("cod-ab-"):
         return False
     needle = query.strip().casefold()
@@ -56,6 +62,9 @@ def _country_match(dataset: dict[str, Any], query: str) -> bool:
 
 
 def _dataset(query: str, timeout: float) -> tuple[dict[str, Any], dict[str, Any]]:
+    # General HDX text search examines at most the first 10 returned results.
+    # One COD-AB match is required within that window, not across the full
+    # catalog; a name match does not establish geographic equivalence.
     search = _request_json("package_search", {"q": query, "rows": 10}, timeout)
     candidates = [item for item in search["result"].get("results", []) if _country_match(item, query)]
     if len(candidates) != 1:
@@ -66,6 +75,8 @@ def _dataset(query: str, timeout: float) -> tuple[dict[str, Any], dict[str, Any]
 
 
 def _resource(dataset: dict[str, Any]) -> dict[str, Any]:
+    # Select exactly one resource declared GeoJSON with a .geojson.zip URL,
+    # rather than guessing between multiple catalog resources.
     resources = [
         item for item in dataset.get("resources") or []
         if str(item.get("format", "")).casefold() == "geojson"
@@ -77,6 +88,8 @@ def _resource(dataset: dict[str, Any]) -> dict[str, Any]:
 
 
 def _archive(url: str, timeout: float, byte_limit: int = DEFAULT_ARCHIVE_LIMIT) -> tuple[bytes, str]:
+    # Bound downloaded compressed ZIP bytes (256 MiB default). SHA-256
+    # identifies those bytes, not publisher authenticity or data freshness.
     request = urllib.request.Request(require_http_url(url), headers={"User-Agent": USER_AGENT})
     with open_http(request, timeout=timeout) as response:
         data = read_limited(response, byte_limit, "COD-AB remote archive", response.headers)
@@ -84,6 +97,8 @@ def _archive(url: str, timeout: float, byte_limit: int = DEFAULT_ARCHIVE_LIMIT) 
 
 
 def _read_member_limited(stream: Any, byte_limit: int) -> bytes:
+    # Enforce the actual decompressed selected-member byte limit while
+    # reading, independently of the size declared in ZIP metadata.
     chunks = []
     size = 0
     while chunk := stream.read(min(DECOMPRESSION_CHUNK_SIZE, byte_limit - size + 1)):
@@ -99,12 +114,17 @@ def _read_member_limited(stream: Any, byte_limit: int) -> bytes:
 
 def _feature_collection(data: bytes, admin_level: int,
                         member_byte_limit: int = DEFAULT_GEOJSON_MEMBER_LIMIT) -> tuple[str, dict[str, Any]]:
+    # Select one xxx_adminN.geojson member, possibly inside a ZIP folder.
+    # This non-edge-matched filename convention does not validate geometry
+    # or establish whether boundaries are actually edge-matched.
     pattern = re.compile(rf"(^|/)[a-z]{{3}}_admin{admin_level}\.geojson$", re.IGNORECASE)
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         members = [item for item in archive.infolist() if pattern.search(item.filename)]
         if len(members) != 1:
             raise ValueError(f"expected one non-edge-matched admin{admin_level} GeoJSON member; found {[item.filename for item in members]}")
         member = members[0]
+        # Declared uncompressed size allows early rejection; the subsequent
+        # bounded read checks actual bytes (512 MiB default, configurable).
         if member.file_size > member_byte_limit:
             raise ValueError(
                 f"declared uncompressed GeoJSON member size {member.file_size} exceeds the "
@@ -121,6 +141,9 @@ def _feature_collection(data: bytes, admin_level: int,
 
 
 def _identity(feature: dict[str, Any], admin_level: int) -> dict[str, Any]:
+    # Retain the level name/P-code and available lower-level parent fields;
+    # missing parents are not reconstructed. ISO codes, publisher-supplied
+    # center coordinates, validity dates and version are not validated.
     properties = feature.get("properties") or {}
     prefix = f"adm{admin_level}"
     parents = []
@@ -153,6 +176,8 @@ def access(country: str, admin_level: int, timeout: float,
     resource = _resource(dataset)
     archive, digest = _archive(resource["url"], timeout, archive_byte_limit)
     member, geojson = _feature_collection(archive, admin_level, geojson_member_byte_limit)
+    # Preserve any source CRS declaration, without transforming coordinates
+    # or establishing equivalence to an EPSG reference system.
     crs = geojson.get("crs")
     crs_claim = (
         "source CRS declaration preserved; no transformation or EPSG equivalence asserted"
@@ -160,6 +185,8 @@ def access(country: str, admin_level: int, timeout: float,
         else "source GeoJSON contains no CRS declaration; no transformation or EPSG equivalence asserted"
     )
     identities = [_identity(feature, admin_level) for feature in geojson["features"]]
+    # Dataset/resource metadata comes from HDX; authority, product and
+    # delivery_catalog are HDA labels. retrieved_at is stamped after parsing.
     lineage = {
         "authority": "United Nations OCHA",
         "product": "Common Operational Datasets — Administrative Boundaries (COD-AB)",
@@ -190,6 +217,8 @@ def access(country: str, admin_level: int, timeout: float,
         "crs_claim": crs_claim,
         "lineage": lineage,
     }
+    # boundary writes reserialized GeoJSON with this top-level HDA
+    # provenance field, not a byte-for-byte copy of the archived member.
     geojson["hda"] = {"schema_version": "hda-geographic-access/v1", "lineage": lineage, "crs_claim": result["crs_claim"]}
     return result, geojson
 
@@ -215,6 +244,10 @@ def _write_json(path: pathlib.Path, payload: Any, force: bool = False) -> None:
 
 
 def _stdout_bytes(result: dict[str, Any], byte_limit: int) -> bytes:
+    # Stdout has a configurable 256 KiB default/minimum, not a file limit.
+    # Oversized normal results become a successful output-limit envelope
+    # with no identities and the original schema in source_schema_version.
+    # If even that envelope exceeds the limit, output fails.
     normal = (json.dumps(result, indent=2, sort_keys=True) + "\n").encode("utf-8")
     if len(normal) <= byte_limit:
         return normal
@@ -244,7 +277,7 @@ def _stdout_bytes(result: dict[str, Any], byte_limit: int) -> bytes:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="operation", required=True)
-    resolve = subparsers.add_parser("resolve", help="resolve a country through its COD-AB admin-0 record")
+    resolve = subparsers.add_parser("resolve", help="return the first COD-AB administrative-level-zero identity for the country query", description="Return the first COD-AB admin-0 identity; feature_count retains the full collection count.")
     resolve.add_argument("country")
     resolve.add_argument("--timeout", type=float, default=60)
     boundary = subparsers.add_parser("boundary", help="obtain one COD-AB administrative level")
@@ -290,8 +323,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.geojson_member_byte_limit,
         )
         if args.operation == "resolve":
+            # Only the first admin-0 identity (in member order) is shown;
+            # feature_count still describes the full FeatureCollection.
             result["identities"] = result["identities"][:1]
         else:
+            # File output precedes stdout. A later stdout failure can leave
+            # the boundary file already written (or replaced with --force).
             _write_json(args.output, geojson, args.force)
             result["geojson_output"] = str(args.output)
         prepared = _stdout_bytes(result, args.stdout_bytes_limit)
