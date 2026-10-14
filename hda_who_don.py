@@ -18,6 +18,11 @@ from hda_http import open_http, read_limited, remote_json_loads, require_http_ur
 
 # One anonymous query interface for WHO Disease Outbreak News. These IDs and
 # endpoint are HDA configuration; outbreak-news records come from WHO.
+# It is a bounded retrieval aid for WHO's published Disease Outbreak News
+# narratives: caller filter and ordering expressions pass through as OData text,
+# and only one requested page is read. Narrative fields are retained as supplied,
+# not converted into case surveillance or epidemiological incidence evidence;
+# absence from this page cannot demonstrate absence of an outbreak or condition.
 SOURCE_ID = "who_disease_outbreak_news"
 INTERFACE_ID = "who_don_odata_public"
 ENDPOINT = "https://www.who.int/api/hubs/diseaseoutbreaknews"

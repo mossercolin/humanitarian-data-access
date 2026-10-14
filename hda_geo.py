@@ -23,6 +23,11 @@ from hda_http import open_http, read_limited, remote_json_loads, require_http_ur
 # Flow: search HDX for one COD-AB dataset, select its GeoJSON ZIP and
 # requested administrative-level member, then preserve native identities
 # and source lineage. Only stdout is byte-bounded; boundary also writes GeoJSON.
+# resolve identifies matching features for inspection, whereas boundary
+# materializes the selected native feature collection before it reports success.
+# Discovery is limited to the COD-AB HDX result and the chosen archive member;
+# a matched name or code is geographic identity from that dataset, not an
+# assertion that it is the sole, current, or authoritative boundary worldwide.
 SOURCE_ID = "ocha_cod_ab"
 INTERFACE_ID = "ocha_cod_ab_hdx_geojson"
 CKAN_ACTION = "https://data.humdata.org/api/3/action"

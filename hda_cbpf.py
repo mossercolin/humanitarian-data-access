@@ -27,6 +27,10 @@ EMPTY_SCOPE = "This exact CBPF query returned no records."
 # One anonymous public CBPF query selects PF Project Summary v4 for a caller-chosen
 # pool fund and allocation-year range. Native JSON records are returned in a
 # bounded model-facing window, alongside request scope and source provenance.
+# The operation name and its non-caller parameters are intentionally pinned: this
+# client describes that one published view, rather than a general CBPF query API.
+# Its result is evidence of the response to the recorded fund/year request only;
+# it cannot establish complete CBPF, fund, allocation, or project coverage.
 
 # Retrieve one JSON response and retain the observed HTTP details. The 1 MiB
 # response-body limit bounds data read from the server, independently of the

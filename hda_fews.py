@@ -25,6 +25,11 @@ MAX_STDOUT_RECORDS = 10
 DEFAULT_STDOUT_BYTES_LIMIT = 256 * 1024
 EMPTY_SCOPE = "No records returned under the current FEWS NET public access scope."
 
+# This client retrieves exactly one marketpricefacts page. The simple field set
+# keeps the requested publisher representation bounded and predictable, while
+# offset and page_size remain the publisher-page selection rather than a claim
+# that all matching pages were examined. Returned records remain native; stdout
+# may show a smaller local preview and is not a substitute for coverage.
 
 def _request_json(url: str, timeout: float) -> tuple[Any, dict[str, Any]]:
     request = urllib.request.Request(require_http_url(url), headers={"Accept": "application/json", "User-Agent": "hda-fews/1.0"})

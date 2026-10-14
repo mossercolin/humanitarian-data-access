@@ -1,9 +1,18 @@
 # Changelog
 
+## v0.4.1
+
+- Clarified the six existing CBPF, FEWS NET, COD-AB geographic, INFORM, UNHCR,
+  and WHO Disease Outbreak News client implementations with source-level
+  explanatory comments. The comments describe request scope, bounded data
+  flow, output limits, provenance, and the limits of each client claim.
+- Added a README source-registry glossary distinguishing source and interface
+  identity, L1/L2 access status, credential metadata, and HDA retrieval time
+  from publisher data times.
+- No runtime, registry, source-interface, dependency, or behavior change.
+
 ## v0.4.0
 
-- Expanded client-level source-code explanations covering each command's purpose,
-  inputs, output shape, data flow, source provenance, and operational limits.
 - Added bounded native UNFPA maternal-mortality selectors for country, M49, year, and named geography; arbitrary SQL is not exposed.
 - Kept attributes-only output by default and added explicit publisher-native geometry retrieval with preserved spatial-reference declarations.
 - Documented the single `HDA_ROOT` installation contract for the canonical Skill, clients, and registry.
@@ -13,11 +22,9 @@
 
 ### Readability, correctness, and bounded I/O
 
-- Improved readability, correctness, and bounded-I/O behavior in the existing
-  HDA product.
 - Improved existing local-query, HDX-discovery, and HDX-acquisition/inspection
   behavior; these corrections do not establish additional source-wide coverage.
-- This entry covers the v0.3.2 release scope only.
+- Retained the v0.3.2 release scope and its bounded-I/O behavior.
 
 ## v0.3.1 — 2026-09-22
 

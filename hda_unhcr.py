@@ -4,6 +4,11 @@
 # "list" exposes a static local operation catalog; "query" requests live anonymous
 # UNHCR JSON. A query collects a bounded local record window, optionally saves
 # that window to a JSON artifact, and sends a smaller byte-bounded stdout view.
+# The catalog is a documentation-derived convenience surface, not a live schema
+# probe. Querying preserves native items after only top-level shape validation;
+# pagination and item schemas can therefore remain incomplete or uncertain.
+# Artifacts preserve the retained window and request facts, while request failures
+# stop the operation rather than producing a partial successful result.
 
 from __future__ import annotations
 

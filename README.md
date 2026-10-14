@@ -1,6 +1,6 @@
 # HDA — Humanitarian Data Access
 
-Current published release: **v0.4.0**.
+Current published release: **v0.4.1**.
 
 HDA is agent-oriented, scoped, traceable access to public/open humanitarian and
 relevant contextual data. It is structured-first, not structured-only: it
@@ -26,8 +26,8 @@ HDA is licensed under the Apache License 2.0; see `LICENSE`.
 
 ## Development provenance
 
-HDA is AI-assisted and human-guided by a humanitarian practitioner with field
-and global humanitarian experience.
+HDA is 100% vibe-coded and human-guided by a humanitarian practitioner with
+field and global humanitarian experience.
 
 ## Requirements
 
@@ -80,16 +80,20 @@ The product directory may be placed anywhere. Configure `HDA_ROOT` in the consum
 classes, and known constraints. It is the authoritative source-availability
 surface.
 
-## Source-code narratability
+### Source-registry glossary
 
-Each runnable Python client explains its purpose, accepted inputs, bounded
-processing flow, output contract, native-source provenance, and operational
-limits alongside the implementation. Read the selected client's module and
-command help before use: a client implements only its stated source route and
-does not imply general coverage of a publisher's data estate. Native records,
-field names, qualifiers, geometries, and declared spatial references are
-preserved where returned; HDA does not silently transform them into a different
-schema, geography, or meaning.
+- **Source**: a publisher or data owner represented by HDA.
+- **Interface**: one documented publisher route, feed, or API operation under a
+  source; it is not a claim about the publisher's complete data estate.
+- **L1**: catalogued, validated interface knowledge.
+- **L2 / `access_ready`**: a dated, scoped operational proof that HDA reached
+  the stated interface. It is not a guarantee of continued availability,
+  completeness, permission, or source-wide coverage.
+- **`auth_class` / `credential_nature`**: the registry's description of the
+  interface's expected access arrangement; credentials themselves remain
+  external deployment state and are never distributed by HDA.
+- **`retrieved_at`**: HDA's access timestamp, distinct from publisher
+  publication, observation, reference, or update time.
 
 HDA-native structured sources may not fully establish some current
 epidemiological questions. Authoritative document or external fallback may

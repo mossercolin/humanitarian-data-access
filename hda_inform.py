@@ -16,6 +16,11 @@ from typing import Any, Sequence
 from hda_http import open_http, read_limited, remote_json_loads, require_http_url
 
 # This client exposes one fixed public INFORM Countries/Scores operation.
+# Workflow, ISO3, and indicator are passed as the operation's native selectors;
+# decoded score rows are preserved rather than normalized into risk conclusions.
+# A successful or empty response is limited to this supported endpoint and
+# selector combination, not a statement about all INFORM models, indicators,
+# countries, or the meaning and comparability of their scores.
 SOURCE_ID = "inform"
 INTERFACE_ID = "inform_web_api"
 ENDPOINT = "https://drmkc.jrc.ec.europa.eu/inform-index/API/InformAPI/Countries/Scores/"
